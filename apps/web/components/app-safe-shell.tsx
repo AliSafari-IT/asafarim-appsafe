@@ -229,6 +229,9 @@ export function AppSafeShell() {
           <span>AppSafe</span>
         </a>
         <div className="header-meta">
+          <a className="header-link" href="/how-to">
+            How to use
+          </a>
           <span className="header-label">Browser-local security</span>
           <span className={`gate-status gate-status-${gateState}`}>
             <span className="status-dot" />

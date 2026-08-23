@@ -1,6 +1,6 @@
 {
   "name": "@asafarim/appsafe",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Browser-native password-based AES-256-GCM encryption for files and data",
   "homepage": "https://alisafari-it.github.io/asafarim-appsafe/",
   "license": "MIT",
