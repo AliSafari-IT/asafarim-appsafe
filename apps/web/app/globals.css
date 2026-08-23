@@ -1022,7 +1022,7 @@ h1 {
 .how-to-shell {
   min-height: 100vh;
   background:
-    radial-gradient(circle at 12% 4%, var(--color-accent-soft), transparent 28rem),
+    radial-gradient(circle at 12% 4%, var(--color-accent-soft), transparent 30%),
     var(--color-bg);
 }
 
@@ -1064,6 +1064,58 @@ h1 {
   box-shadow: var(--shadow-focus);
 }
 
+.site-header-actions,
+.project-links {
+  display: inline-flex;
+  align-items: center;
+}
+
+.site-header-actions {
+  gap: var(--space-6);
+}
+
+.project-links {
+  gap: var(--space-2);
+}
+
+.icon-button {
+  display: inline-grid;
+  width: var(--control-height);
+  height: var(--control-height);
+  place-items: center;
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.icon-button:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-focus);
+}
+
+.icon-button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.social-icon {
+  width: var(--text-xl);
+  height: var(--text-xl);
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.social-icon-filled {
+  fill: currentColor;
+  stroke: none;
+}
+
 .how-to-hero {
   padding-block: var(--space-20) var(--space-12);
   border-bottom: var(--border-width) solid var(--color-border);
@@ -1075,7 +1127,7 @@ h1 {
 }
 
 .how-to-lede {
-  max-width: 48rem;
+  max-width: var(--content-max);
   margin-bottom: var(--space-8);
   color: var(--color-ink);
   font-size: var(--text-lg);
@@ -1167,14 +1219,12 @@ h1 {
 }
 
 .how-to-card p {
-  min-height: 3.2rem;
   margin-bottom: var(--space-5);
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
 }
 
 .how-to-code {
-  min-height: 7rem;
   margin: var(--space-0);
   padding: var(--space-5);
   overflow-x: auto;
@@ -1233,7 +1283,6 @@ h1 {
 }
 
 .how-to-boundary-card {
-  min-height: 13rem;
   padding: var(--space-6);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -1268,6 +1317,19 @@ h1 {
 @media (max-width: 32rem) {
   .how-to-brand-label {
     display: none;
+  }
+
+  .site-header-actions {
+    gap: var(--space-3);
+  }
+
+  .project-links {
+    gap: var(--space-1);
+  }
+
+  .icon-button {
+    width: var(--space-8);
+    height: var(--space-8);
   }
 
   .how-to-nav {
