@@ -1,6 +1,6 @@
 {
   "name": "asafarim-appsafe-workspace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A publicly visible, owner-gated browser encryption workspace.",
   "scripts": {
@@ -12,7 +12,7 @@
     "dev": "pnpm --filter @asafarim/appsafe build && pnpm --parallel --filter @asafarim/appsafe-web --filter @asafarim/appsafe-api dev",
     "dev:demo": "pnpm --filter @asafarim/appsafe build && pnpm --filter @asafarim/appsafe-demo dev",
     "test": "pnpm --filter @asafarim/appsafe test && pnpm --filter @asafarim/appsafe-cli test",
-    "typecheck": "pnpm --filter @asafarim/appsafe check && pnpm --filter @asafarim/appsafe-cli check && pnpm --filter @asafarim/appsafe-cli check:test && pnpm --filter @asafarim/appsafe-web typecheck && pnpm --filter @asafarim/appsafe-api typecheck && pnpm --filter @asafarim/appsafe-demo typecheck"
+    "typecheck": "pnpm --filter @asafarim/appsafe build && pnpm --filter @asafarim/appsafe-cli check && pnpm --filter @asafarim/appsafe-cli check:test && pnpm --filter @asafarim/appsafe-web typecheck && pnpm --filter @asafarim/appsafe-api typecheck && pnpm --filter @asafarim/appsafe-demo typecheck"
   },
   "engines": {
     "node": ">=20.0.0"
