@@ -116,6 +116,25 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/appsafe-cli:
+    dependencies:
+      '@asafarim/appsafe':
+        specifier: workspace:*
+        version: link:../appsafe
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
+    devDependencies:
+      '@types/node':
+        specifier: 26.2.0
+        version: 26.2.0
+      tsx:
+        specifier: 4.23.12
+        version: 4.23.12
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/shared-tokens: {}
 
 packages:

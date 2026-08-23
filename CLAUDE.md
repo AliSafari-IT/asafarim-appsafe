@@ -15,6 +15,7 @@ AppSafe is a PNPM monorepo built around a browser-local encryption toolkit. The 
 | `apps/web` | `@asafarim/appsafe-web` | Owner-gated Next.js App Router UI. |
 | `apps/api` | `@asafarim/appsafe-api` | Express gate service; verifies access code, issues signed cookie. |
 | `apps/demo` | `@asafarim/appsafe-demo` | Public, ungated Next.js playground for the package. |
+| `packages/appsafe-cli` | `@asafarim/appsafe-cli` | Node.js CLI for config-driven local file and folder encryption. |
 
 ## Tech stack
 
@@ -33,12 +34,14 @@ Run from the repository root.
 | Command | Description |
 | --- | --- |
 | `pnpm install` | Install all workspace dependencies. |
-| `pnpm build` | Build every package and all three apps. |
+| `pnpm appsafe -- <command>` | Run the local AppSafe CLI. |
+| `pnpm build` | Build the CLI, crypto package, and all three apps. |
+| `pnpm build:cli` | Build the crypto package and AppSafe CLI. |
 | `pnpm build:crypto` | Build only `@asafarim/appsafe`. |
 | `pnpm build:demo` | Build the crypto core and the demo app. |
 | `pnpm dev` | Build crypto, then run `apps/web` (port 3000) and `apps/api` (port 4000) in parallel. |
 | `pnpm dev:demo` | Build crypto, then run `apps/demo` on port 3001 (auto-kills any stale process on 3001 first via `kill-port`). |
-| `pnpm test` | Run the `@asafarim/appsafe` crypto test suite (`tsx --test`). |
+| `pnpm test` | Run the crypto and CLI test suites (`tsx --test`). |
 | `pnpm typecheck` | Typecheck every package and app. |
 
 Per-app scripts live in each `apps/*/package.json` and can be run via `pnpm --filter <pkg-name> <script>`.
@@ -55,6 +58,16 @@ Per-app scripts live in each `apps/*/package.json` and can be run via `pnpm --fi
 - Wrong passwords and tampered payloads must fail closed.
 - The package performs **no network requests** and never reads files or creates downloads.
 - Published package contains only `dist`, `README.md`, and `LICENSE`.
+
+### CLI package (`packages/appsafe-cli`)
+
+- Node.js-only filesystem layer; keep Node-specific imports out of the browser crypto package.
+- Configuration version is `1`; target paths are resolved relative to the config file.
+- `init` creates a placeholder configuration only when the requested config path is absent; it never overwrites an existing config.
+- Encrypt files directly and archive folders as ZIP data before encrypting.
+- Do not store passwords in configuration; prompt without echo or use explicit stdin/environment options.
+- Write outputs atomically, reject symbolic links and unsafe archive paths, and require `--force` for replacements.
+- Update `.gitignore` only after all configured targets encrypt successfully; never delete sources automatically.
 
 ### Gate API (`apps/api`)
 
@@ -146,6 +159,9 @@ Add owner-only secrets in the provider dashboard; set `API_URL` before building 
 ```bash
 pnpm --filter @asafarim/appsafe build
 pnpm --filter @asafarim/appsafe publish --access public
+
+pnpm --filter @asafarim/appsafe-cli build
+pnpm --filter @asafarim/appsafe-cli publish --access public
 ```
 
-`prepublishOnly` runs the build automatically. The published tarball excludes source, tests, and apps.
+`prepublishOnly` runs the build automatically. The published tarballs exclude source, tests, and apps.

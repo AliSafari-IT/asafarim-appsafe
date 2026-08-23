@@ -11,6 +11,7 @@ AppSafe is a publicly visible PNPM workspace built around a browser-local encryp
 | `apps/web` | `@asafarim/appsafe-web` | Owner-gated Next.js App Router UI for the encryption tools. |
 | `apps/api` | `@asafarim/appsafe-api` | Express gate service that verifies the access code and issues a signed session cookie. |
 | `apps/demo` | `@asafarim/appsafe-demo` | Public, ungated Next.js playground for the published package. |
+| `packages/appsafe-cli` | `@asafarim/appsafe-cli` | Node.js CLI for config-driven local file and folder encryption. |
 
 The API never receives file contents or encryption passwords. No database is required because the gate session is a stateless HMAC-signed token; add persistence only if revocation or audit history becomes necessary.
 
@@ -26,12 +27,14 @@ Run from the repository root.
 | Script | Description |
 | --- | --- |
 | `pnpm install` | Install all workspace dependencies. |
-| `pnpm build` | Build every package and all three apps. |
+| `pnpm appsafe -- <command>` | Run the local AppSafe CLI. |
+| `pnpm build` | Build the CLI, crypto package, and all three apps. |
+| `pnpm build:cli` | Build the crypto package and AppSafe CLI. |
 | `pnpm build:crypto` | Build only `@asafarim/appsafe`. |
 | `pnpm build:demo` | Build the crypto core and the demo app. |
 | `pnpm dev` | Build crypto, then run `apps/web` and `apps/api` in parallel. |
 | `pnpm dev:demo` | Build crypto, then run `apps/demo` on port 3001 (auto-kills any stale process on 3001 first). |
-| `pnpm test` | Run the `@asafarim/appsafe` crypto test suite. |
+| `pnpm test` | Run the crypto and CLI test suites. |
 | `pnpm typecheck` | Typecheck every package and app. |
 
 ## Local setup
@@ -97,6 +100,23 @@ This keeps file contents and operation passwords local, uses standardized primit
 
 See [`packages/appsafe/README.md`](./packages/appsafe/README.md) for the full API surface.
 
+## CLI encryption
+
+The separate `@asafarim/appsafe-cli` package adds local filesystem commands without changing the browser-first crypto core. Run `init` to create a starter configuration with placeholders when no configuration exists, then edit the target paths:
+
+```bash
+pnpm appsafe -- init
+pnpm appsafe -- encrypt --config appsafe.config.json
+pnpm appsafe -- decrypt --config appsafe.config.json
+pnpm appsafe -- check --config appsafe.config.json
+```
+
+[`appsafe.config.example.json`](./appsafe.config.example.json) is also available as a manual template.
+
+The CLI writes encrypted artifacts beside their sources by default, never deletes sources automatically, and updates `.gitignore` only after every configured target has encrypted successfully. Existing outputs require `--force` to be replaced. Passwords are prompted without echo; `--password-stdin` and `--password-env <name>` are available for automation. Use `--dry-run` to validate paths and preview changes without writing files.
+
+Folder targets are archived as ZIP data before encryption. Symbolic links are rejected, and archive extraction validates paths before restoring them. See [`packages/appsafe-cli/README.md`](./packages/appsafe-cli/README.md) for the configuration schema and CLI details.
+
 ## Publishing the package
 
 From the workspace root:
@@ -104,9 +124,12 @@ From the workspace root:
 ```bash
 pnpm --filter @asafarim/appsafe build
 pnpm --filter @asafarim/appsafe publish --access public
+
+pnpm --filter @asafarim/appsafe-cli build
+pnpm --filter @asafarim/appsafe-cli publish --access public
 ```
 
-The published package contains only its built `dist` output, README, and LICENSE. The apps and API are not included.
+The published packages contain only their built `dist` output, README, and LICENSE. The apps and API are not included.
 
 ## Deployment
 
