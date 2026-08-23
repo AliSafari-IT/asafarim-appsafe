@@ -111,7 +111,7 @@ pnpm appsafe -- decrypt --config appsafe.config.json
 pnpm appsafe -- check --config appsafe.config.json
 ```
 
-[`appsafe.config.example.json`](./appsafe.config.example.json) is also available as a manual template.
+The CLI package README documents the full configuration schema and safety behavior.
 
 The CLI writes encrypted artifacts beside their sources by default, never deletes sources automatically, and updates `.gitignore` only after every configured target has encrypted successfully. Existing outputs require `--force` to be replaced. Passwords are prompted without echo; `--password-stdin` and `--password-env <name>` are available for automation. Use `--dry-run` to validate paths and preview changes without writing files.
 
@@ -130,6 +130,18 @@ pnpm --filter @asafarim/appsafe-cli publish --access public
 ```
 
 The published packages contain only their built `dist` output, README, and LICENSE. The apps and API are not included.
+
+## CI/CD
+
+GitHub Actions runs typechecking, tests, and production builds for pull requests and pushes. A successful push to `main`:
+
+- publishes `@asafarim/appsafe` and `@asafarim/appsafe-cli` only when the package version is not already on npm;
+- builds the demo as a static Next.js export;
+- deploys the demo artifact to GitHub Pages.
+
+The workflow reads the `NPM_TOKEN` repository Actions secret for npm publishing. Enable GitHub Pages in repository settings with **Build and deployment → Source → GitHub Actions**. Bump a package version before merging a change that should produce a new npm release; already-published versions are skipped safely.
+
+The demo build uses the base path reported by GitHub Pages and does not require application secrets.
 
 ## Deployment
 

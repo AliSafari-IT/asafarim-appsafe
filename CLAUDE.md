@@ -112,6 +112,7 @@ import "@asafarim/shared-tokens/styles.css";
 | `COOKIE_SAME_SITE` | `apps/api` | `lax` (default) or `none` for cross-site deployments. |
 | `COOKIE_SECURE` | `apps/api` | `true` in production. |
 | `TRUST_PROXY` | `apps/api` | `true` behind a reverse proxy. |
+| `NPM_TOKEN` | GitHub Actions | Repository secret used only for npm publishing. |
 
 See `.env.example` and `apps/api/.env.example` for templates.
 
@@ -135,6 +136,14 @@ pnpm build
 ```
 
 For demo-only changes, `pnpm build:demo` plus `pnpm --filter @asafarim/appsafe-demo typecheck` is sufficient.
+
+## CI/CD
+
+- Pull requests and pushes run typecheck, tests, and production builds.
+- Successful pushes to `main` publish `@asafarim/appsafe` and `@asafarim/appsafe-cli` when their versions are not already on npm.
+- Successful pushes to `main` deploy the statically exported `apps/demo` build to GitHub Pages.
+- The Pages build sets `NEXT_PUBLIC_BASE_PATH` from the GitHub Pages metadata and requires no application secrets.
+- npm publishing reads only the `NPM_TOKEN` repository Actions secret.
 
 ## Deployment
 

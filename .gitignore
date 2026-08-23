@@ -10,3 +10,4 @@ coverage/
 *.tsbuildinfo
 .DS_Store
 apps/web/next-env.d.ts
+out/

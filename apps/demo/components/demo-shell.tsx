@@ -328,7 +328,7 @@ export function DemoShell() {
           </div>
           <div className="demo-terminal-footer">
             <span>PBKDF2 / SHA-256</span>
-            <span>{DEFAULT_PBKDF2_ITERATIONS.toLocaleString()} rounds</span>
+            <span>{DEFAULT_PBKDF2_ITERATIONS.toLocaleString("en-US")} rounds</span>
           </div>
         </div>
       </section>
