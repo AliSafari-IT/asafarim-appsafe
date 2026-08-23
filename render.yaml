@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: appsafe-api
+    runtime: node
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:crypto && pnpm --filter @asafarim/appsafe-api build
+    startCommand: pnpm --filter @asafarim/appsafe-api start
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ACCESS_CODE
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: COOKIE_SAME_SITE
+        value: none
+      - key: COOKIE_SECURE
+        value: true
+      - key: TRUST_PROXY
+        value: true
+
+  - type: web
+    name: appsafe-web
+    runtime: node
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:crypto && pnpm --filter @asafarim/appsafe-web build
+    startCommand: pnpm --filter @asafarim/appsafe-web start
+    envVars:
+      - key: API_URL
+        sync: false
+
+  - type: web
+    name: appsafe-demo
+    runtime: node
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:demo
+    startCommand: pnpm --filter @asafarim/appsafe-demo start

@@ -1,0 +1,11 @@
+{
+  "name": "@asafarim/shared-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "sideEffects": [
+    "./styles.css"
+  ],
+  "exports": {
+    "./styles.css": "./styles.css"
+  }
+}

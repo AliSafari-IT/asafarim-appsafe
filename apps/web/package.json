@@ -1,0 +1,29 @@
+{
+  "name": "@asafarim/appsafe-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public AppSafe Next.js frontend",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@asafarim/appsafe": "workspace:*",
+    "@asafarim/shared-tokens": "workspace:*",
+    "fflate": "0.8.3",
+    "next": "16.3.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "typescript": "7.0.2"
+  }
+}
