@@ -1,6 +1,6 @@
 {
   "name": "asafarim-appsafe-workspace",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "A publicly visible, owner-gated browser encryption workspace.",
   "scripts": {

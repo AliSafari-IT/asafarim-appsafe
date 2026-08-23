@@ -2,9 +2,9 @@
 
 Local workspace package that ships the AppSafe design tokens as a single CSS custom-property stylesheet. Consumed by `apps/web` and `apps/demo`.
 
-## Usage
+## Use it as a library
 
-Import once at the root of your application:
+Import the stylesheet once at the root of your application:
 
 ```ts
 import "@asafarim/shared-tokens/styles.css";

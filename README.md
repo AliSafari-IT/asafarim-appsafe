@@ -117,6 +117,31 @@ The CLI writes encrypted artifacts beside their sources by default, never delete
 
 Folder targets are archived as ZIP data before encryption. Symbolic links are rejected, and archive extraction validates paths before restoring them. See [`packages/appsafe-cli/README.md`](./packages/appsafe-cli/README.md) for the configuration schema and CLI details.
 
+## Use it as a library
+
+Use the browser package directly in application code:
+
+```ts
+import { decryptText, encryptText } from "@asafarim/appsafe";
+
+const payload = await encryptText("private note", password);
+const plaintext = await decryptText(payload, password);
+```
+
+Use the Node.js package when your application needs configured filesystem workflows:
+
+```ts
+import {
+  encryptConfiguredTargets,
+  loadConfig,
+} from "@asafarim/appsafe-cli";
+
+const loaded = await loadConfig("appsafe.config.json");
+await encryptConfiguredTargets(loaded.config, loaded.path, password);
+```
+
+See the package READMEs for the complete browser API, CLI commands, configuration schema, and safety behavior.
+
 ## Publishing the package
 
 From the workspace root:

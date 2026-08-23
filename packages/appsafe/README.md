@@ -59,7 +59,9 @@ Typed error thrown by all functions. Inspect `error.code` to differentiate failu
 | `INVALID_TEXT` | Decrypted bytes are not valid UTF-8. |
 | `UNSUPPORTED_RUNTIME` | The runtime has no Web Crypto `subtle` API. |
 
-## Usage
+## Use it as a library
+
+Import the browser-first API directly into your application. The package returns portable encrypted bytes and performs no filesystem or network operations.
 
 ### Text round-trip
 

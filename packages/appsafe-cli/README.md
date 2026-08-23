@@ -15,7 +15,25 @@ The CLI is intentionally separate from the browser-first crypto package. It adds
 pnpm add -D @asafarim/appsafe-cli
 ```
 
-The package provides the `appsafe` executable.
+The package provides the `appsafe` executable and programmatic Node.js exports.
+
+## Use it as a library
+
+Use the same configuration workflow from another Node.js application:
+
+```ts
+import {
+  encryptConfiguredTargets,
+  initializeConfig,
+  loadConfig,
+} from "@asafarim/appsafe-cli";
+
+await initializeConfig("appsafe.config.json");
+const loaded = await loadConfig("appsafe.config.json");
+await encryptConfiguredTargets(loaded.config, loaded.path, password);
+```
+
+The exported API also includes `decryptConfiguredTargets`, `inspectConfiguredTargets`, `updateGitignore`, and `resolveConfiguredTargets`. Passwords are supplied at runtime and are not stored by the package.
 
 ## Configuration
 
