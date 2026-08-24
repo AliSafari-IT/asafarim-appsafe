@@ -92,9 +92,25 @@ function operationError(error: unknown): string {
 
 function AppMark() {
   return (
-    <svg viewBox="0 0 32 32" aria-hidden="true" className="demo-mark-icon">
-      <path d="M16 3.5 26 7v7.5c0 6.4-4.2 11.3-10 14-5.8-2.7-10-7.6-10-14V7l10-3.5Z" />
-      <path d="m11.5 16 3 3 6-6" />
+    <svg viewBox="0 0 48 48" aria-hidden="true" className="demo-mark-icon">
+      <path d="M24 5 39 10.5V21c0 10.2-6.2 18.1-15 22C14.2 39.1 9 31.2 9 21V10.5z" />
+      <path d="m15.5 23.8 5.3 5.3 11.7-12.2" />
+    </svg>
+  );
+}
+
+function NpmIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="demo-social-icon">
+      <path d="M3 6h18v12h-6V9h-3v9H3z" />
+    </svg>
+  );
+}
+
+function GitHubIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="demo-social-icon demo-social-icon-filled">
+      <path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.17c-3.2.7-3.87-1.36-3.87-1.36-.53-1.34-1.3-1.7-1.3-1.7-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.67 1.24 3.32.95.1-.74.4-1.24.72-1.53-2.55-.29-5.23-1.27-5.23-5.67 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.45.11-3.03 0 0 .96-.31 3.16 1.17a10.98 10.98 0 0 1 5.76 0c2.2-1.48 3.16-1.17 3.16-1.17.62 1.58.23 2.74.11 3.03.73.8 1.18 1.82 1.18 3.07 0 4.41-2.69 5.38-5.25 5.66.41.36.77 1.07.77 2.16v3.2c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z" />
     </svg>
   );
 }
@@ -284,11 +300,35 @@ export function DemoShell() {
           <span className="demo-brand-slash">/</span>
           <span className="demo-brand-muted">playground</span>
         </a>
-        <nav className="demo-nav" aria-label="Demo navigation">
-          <a href="#playground">Playground</a>
-          <a href="#api">API examples</a>
-          <span className="demo-version">v0.1.0</span>
-        </nav>
+        <div className="demo-header-actions">
+          <nav className="demo-project-links" aria-label="Project links">
+            <a
+              className="demo-icon-button"
+              href="https://www.npmjs.com/package/@asafarim/appsafe"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open AppSafe on npm"
+              title="AppSafe on npm"
+            >
+              <NpmIcon />
+            </a>
+            <a
+              className="demo-icon-button"
+              href="https://github.com/AliSafari-IT/asafarim-appsafe"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open AppSafe on GitHub"
+              title="AppSafe on GitHub"
+            >
+              <GitHubIcon />
+            </a>
+          </nav>
+          <nav className="demo-nav" aria-label="Demo navigation">
+            <a href="#playground">Playground</a>
+            <a href="#api">API examples</a>
+            <span className="demo-version">v0.1.0</span>
+          </nav>
+        </div>
       </header>
 
       <section className="demo-hero demo-width" id="top">

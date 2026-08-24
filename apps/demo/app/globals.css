@@ -86,8 +86,8 @@ a {
 
 .demo-brand-mark {
   display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: var(--space-10);
+  height: var(--space-10);
   margin-right: var(--space-1);
   place-items: center;
   border: var(--border-width) solid var(--color-border-strong);
@@ -97,8 +97,8 @@ a {
 }
 
 .demo-mark-icon {
-  width: 1.35rem;
-  height: 1.35rem;
+  width: var(--space-8);
+  height: var(--space-8);
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
@@ -131,6 +131,58 @@ a {
 
 .demo-nav a:hover {
   color: var(--color-ink-strong);
+}
+
+.demo-header-actions,
+.demo-project-links {
+  display: inline-flex;
+  align-items: center;
+}
+
+.demo-header-actions {
+  gap: var(--space-6);
+}
+
+.demo-project-links {
+  gap: var(--space-2);
+}
+
+.demo-icon-button {
+  display: inline-grid;
+  width: var(--control-height);
+  height: var(--control-height);
+  place-items: center;
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.demo-icon-button:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-focus);
+}
+
+.demo-icon-button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.demo-social-icon {
+  width: var(--text-xl);
+  height: var(--text-xl);
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.demo-social-icon-filled {
+  fill: currentColor;
+  stroke: none;
 }
 
 .demo-version {
@@ -912,6 +964,19 @@ pre {
 @media (max-width: 32rem) {
   .demo-header {
     min-height: 4.5rem;
+  }
+
+  .demo-header-actions {
+    gap: var(--space-3);
+  }
+
+  .demo-project-links {
+    gap: var(--space-1);
+  }
+
+  .demo-icon-button {
+    width: var(--space-8);
+    height: var(--space-8);
   }
 
   .demo-brand-muted,
