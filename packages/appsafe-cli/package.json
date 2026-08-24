@@ -1,6 +1,6 @@
 {
   "name": "@asafarim/appsafe-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Config-driven local file and folder encryption CLI for AppSafe",
   "license": "MIT",
   "type": "module",

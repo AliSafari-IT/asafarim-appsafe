@@ -187,6 +187,15 @@ printf '%s\\n' "$APPSAFE_PASSWORD" | \\
   },
 ];
 
+function AppIcon() {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" className="app-icon">
+      <path d="M24 5 39 10.5V21c0 10.2-6.2 18.1-15 22C14.2 39.1 9 31.2 9 21V10.5z" />
+      <path d="m15.5 23.8 5.3 5.3 11.7-12.2" />
+    </svg>
+  );
+}
+
 function NpmIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="social-icon">
@@ -219,7 +228,9 @@ export default function HowToPage() {
     <main className="app-shell how-to-shell">
       <header className="site-header content-width how-to-header">
         <a className="brand" href="/" aria-label="AppSafe workspace home">
-          <span className="brand-mark">A</span>
+          <span className="brand-mark">
+            <AppIcon />
+          </span>
           <span>AppSafe</span>
           <span className="how-to-brand-label">/ how-to</span>
         </a>

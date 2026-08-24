@@ -17,8 +17,8 @@ The API never receives file contents or encryption passwords. No database is req
 
 ## Prerequisites
 
-- Node.js 20 or newer
-- PNPM 10 (the workspace pins `pnpm@10.28.2` via `packageManager`)
+- Node.js 22 or newer
+- PNPM 11 (the workspace pins `pnpm@11.23.0` via `packageManager`)
 
 ## Workspace scripts
 

@@ -19,8 +19,8 @@ AppSafe is a PNPM monorepo built around a browser-local encryption toolkit. The 
 
 ## Tech stack
 
-- **Package manager:** PNPM 10 (pinned via `packageManager` in root `package.json`).
-- **Node:** >= 20.0.0.
+- **Package manager:** PNPM 11 (pinned via `packageManager` in root `package.json`).
+- **Node:** >= 22.0.0.
 - **Language:** TypeScript everywhere. Strict mode.
 - **Frontend:** Next.js 16 App Router, React 19, Turbopack for dev.
 - **Backend:** Express 5, Helmet, express-rate-limit, CORS.

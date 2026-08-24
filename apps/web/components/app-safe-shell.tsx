@@ -104,9 +104,9 @@ function operationError(error: unknown): string {
 
 function AppIcon() {
   return (
-    <svg viewBox="0 0 32 32" aria-hidden="true" className="app-icon">
-      <path d="M16 3.5 26 7v7.5c0 6.4-4.2 11.3-10 14-5.8-2.7-10-7.6-10-14V7l10-3.5Z" />
-      <path d="m11.5 16 3 3 6-6" />
+    <svg viewBox="0 0 48 48" aria-hidden="true" className="app-icon">
+      <path d="M24 5 39 10.5V21c0 10.2-6.2 18.1-15 22C14.2 39.1 9 31.2 9 21V10.5z" />
+      <path d="m15.5 23.8 5.3 5.3 11.7-12.2" />
     </svg>
   );
 }
