@@ -26,6 +26,9 @@ type Artifact = {
   bytes: Uint8Array;
   name: string;
 };
+type DemoShellProps = {
+  version: string;
+};
 
 const APP_SAFE_EXTENSION = ".appsafe";
 const TEXT_EXAMPLE = `import { decryptText, encryptText } from "@asafarim/appsafe";
@@ -123,7 +126,7 @@ function ArrowIcon() {
   );
 }
 
-export function DemoShell() {
+export function DemoShell({ version }: DemoShellProps) {
   const [mode, setMode] = useState<DemoMode>("text");
   const [password, setPassword] = useState("");
   const [textValue, setTextValue] = useState("This note never leaves the browser.");
@@ -326,7 +329,7 @@ export function DemoShell() {
           <nav className="demo-nav" aria-label="Demo navigation">
             <a href="#playground">Playground</a>
             <a href="#api">API examples</a>
-            <span className="demo-version">v0.1.0</span>
+            <span className="demo-version">v{version}</span>
           </nav>
         </div>
       </header>
