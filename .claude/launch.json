@@ -7,6 +7,13 @@
       "runtimeArgs": ["--filter", "@asafarim/appsafe-demo", "exec", "next", "dev"],
       "port": 3001,
       "autoPort": true
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@asafarim/appsafe-web", "exec", "next", "dev"],
+      "port": 3000,
+      "autoPort": true
     }
   ]
 }

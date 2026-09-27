@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "encryption": {
+    "mode": "public-key",
+    "publicKeyFile": "./.appsafe/key.pub",
+    "privateKeyFile": "./.appsafe/key.txt"
+  },
+  "targets": [
+    {
+      "source": "./path/to/private-app",
+      "encrypted": "./path/to/private-app.appsafe",
+      "type": "directory"
+    }
+  ],
+  "gitignore": {
+    "file": "./.gitignore",
+    "ignoreSources": true
+  }
+}
