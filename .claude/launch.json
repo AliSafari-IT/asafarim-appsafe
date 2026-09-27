@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "demo",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@asafarim/appsafe-demo", "exec", "next", "dev"],
+      "port": 3001,
+      "autoPort": true
+    }
+  ]
+}
