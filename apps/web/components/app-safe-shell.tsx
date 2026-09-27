@@ -27,6 +27,8 @@ type Notice = {
 };
 
 const APP_SAFE_EXTENSION = ".appsafe";
+const DEMO_URL =
+  process.env.NEXT_PUBLIC_DEMO_URL ?? "https://alisafari-it.github.io/asafarim-appsafe/";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
@@ -209,7 +211,9 @@ export function AppSafeShell() {
         if (response.ok && body?.unlocked === true) {
           setGateState("unlocked");
         } else {
-          setGateError("That code did not unlock the workspace.");
+          setGateError(
+            "That code did not unlock the workspace. Only the owner has a code; visitors can use the public demo instead."
+          );
         }
       } catch {
         setGateError("The gate service is unavailable. Try again shortly.");
@@ -268,6 +272,9 @@ export function AppSafeShell() {
             </a>
           </nav>
           <div className="header-meta">
+            <a className="header-link" href={DEMO_URL}>
+              Try the demo
+            </a>
             <a className="header-link" href="/how-to">
               How to use
             </a>
@@ -296,6 +303,9 @@ export function AppSafeShell() {
             <a className="button button-primary" href="#workspace">
               Open workspace
               <ArrowIcon />
+            </a>
+            <a className="button button-secondary" href={DEMO_URL}>
+              Try the public demo
             </a>
             <span className="hero-proof">
               <LockIcon />
@@ -353,8 +363,8 @@ export function AppSafeShell() {
             <h2>Ready when you are.</h2>
           </div>
           <p>
-            The interface is public. The working tools remain behind the owner
-            access gate.
+            These tools are reserved for the owner. Everyone else can try the
+            same encryption in the free public demo.
           </p>
         </div>
 
@@ -438,16 +448,28 @@ function GatePanel({
         <span className="gate-icon">
           <LockIcon />
         </span>
-        <p className="eyebrow">Restricted by design</p>
-        <h3>Enter the owner code to use the tools.</h3>
+        <p className="eyebrow">Just exploring?</p>
+        <h3>You don&apos;t need a code to try AppSafe.</h3>
         <p>
-          AppSafe is intentionally visible to everyone, but only the owner can
-          activate file processing in this session.
+          This workspace belongs to its owner, and access codes are not handed
+          out. The public demo runs the same encryption in your browser with no
+          code, no sign-up, and no upload.
         </p>
+        <a className="button button-primary gate-demo-link" href={DEMO_URL}>
+          Open the public demo
+          <ArrowIcon />
+        </a>
+        <p className="eyebrow gate-owner-eyebrow">Are you the owner?</p>
         <ul className="gate-list">
-          <li>Verification happens on the Express API.</li>
-          <li>Success creates an expiring HttpOnly session cookie.</li>
-          <li>The access code is not persisted in the browser.</li>
+          <li>
+            Your code is the <code>APP_ACCESS_CODE</code> value set on your
+            AppSafe API server.
+          </li>
+          <li>
+            Self-hosting? Deploy your own copy and choose your own code with the{" "}
+            <a href="https://github.com/AliSafari-IT/asafarim-appsafe#local-setup">setup guide</a>.
+          </li>
+          <li>The code is verified by the API and never stored in the browser.</li>
         </ul>
       </div>
       <form className="gate-card" onSubmit={onSubmit}>
@@ -472,7 +494,9 @@ function GatePanel({
           autoFocus={!initializing}
           disabled={initializing || busy}
         />
-        <p className="field-help">Only a pass/fail response returns to this page.</p>
+        <p className="field-help">
+          Owner only. No code? <a href={DEMO_URL}>Try the public demo</a> instead.
+        </p>
         {error ? (
           <p className="notice notice-error" role="alert">
             {error}

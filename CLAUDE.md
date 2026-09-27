@@ -85,6 +85,7 @@ Per-app scripts live in each `apps/*/package.json` and can be run via `pnpm --fi
 ### Web app (`apps/web`)
 
 - Publicly visible landing page; encryption UI mounts only after a successful gate check.
+- Visitors without an access code are pointed to the public demo (header, hero, and gate panel). Never hint at or expose the access code itself.
 - Server-side rewrite proxies `/api/gate/*` to the Express API via `API_URL`, so browser requests stay same-origin.
 - Uses `fflate` only to zip folder entries before encrypting — not for crypto.
 - File contents and operation passwords never leave the browser.
@@ -114,6 +115,7 @@ import "@asafarim/shared-tokens/styles.css";
 | `SESSION_SECRET` | `apps/api` | Signs the gate cookie. >= 32 chars. Different from `APP_ACCESS_CODE`. |
 | `WEB_ORIGIN` | `apps/api` | Public web origin for CORS and cookie scoping. |
 | `API_URL` | `apps/web` | Public API URL for the server-side rewrite. |
+| `NEXT_PUBLIC_DEMO_URL` | `apps/web` | Optional public demo URL linked for visitors without an access code. Defaults to the GitHub Pages demo. |
 | `COOKIE_SAME_SITE` | `apps/api` | `lax` (default) or `none` for cross-site deployments. |
 | `COOKIE_SECURE` | `apps/api` | `true` in production. |
 | `TRUST_PROXY` | `apps/api` | `true` behind a reverse proxy. |

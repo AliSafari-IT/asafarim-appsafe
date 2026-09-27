@@ -1340,3 +1340,24 @@ h1 {
     padding-block: var(--space-16) var(--space-10);
   }
 }
+
+.gate-demo-link {
+  margin-bottom: var(--space-8);
+}
+
+.gate-owner-eyebrow {
+  padding-top: var(--space-6);
+  border-top: var(--border-width) solid var(--color-border);
+}
+
+.gate-list code {
+  color: var(--color-focus);
+  font-size: var(--text-xs);
+}
+
+.gate-list a,
+.field-help a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
