@@ -6,7 +6,7 @@ AppSafe is a publicly visible PNPM workspace built around a browser-local encryp
 
 | Path | Package name | Purpose |
 | --- | --- | --- |
-| `packages/appsafe` | `@asafarim/appsafe` | npm-publishable Web Crypto encryption core (AES-256-GCM + PBKDF2). |
+| `packages/appsafe` | `@asafarim/appsafe` | npm-publishable Web Crypto encryption core (AES-256-GCM with PBKDF2 password or ECDH P-256 public-key modes). |
 | `packages/shared-tokens` | `@asafarim/shared-tokens` | Local design-token stylesheet consumed by all UIs. |
 | `apps/web` | `@asafarim/appsafe-web` | Owner-gated Next.js App Router UI for the encryption tools. |
 | `apps/api` | `@asafarim/appsafe-api` | Express gate service that verifies the access code and issues a signed session cookie. |
@@ -89,14 +89,24 @@ The gate controls application use, not the cryptographic secrecy of the public J
 
 ## Encryption design
 
-`@asafarim/appsafe` uses the browser's Web Crypto API with:
+`@asafarim/appsafe` uses the browser's Web Crypto API and supports two selectable methods. Both finish with AES-256-GCM over an authenticated, versioned `ASAFE` envelope, so a payload always identifies its own method.
 
-- AES-256-GCM for authenticated encryption;
-- PBKDF2-HMAC-SHA-256 with a random 16-byte salt and 600,000 iterations (default) for password-based key derivation;
-- a random 96-bit GCM nonce for every operation;
-- a versioned binary envelope (`ASAFE` magic + version + salt + IV + iteration count) authenticated as AES-GCM additional data.
+- **Password mode (envelope v1, default):** PBKDF2-HMAC-SHA-256 with a random 16-byte salt and 600,000 iterations derives the AES key. Header: magic + version + salt + IV + iteration count.
+- **Public-key mode (envelope v2):** a random 256-bit content key encrypts the data; for each of up to 16 recipients, an ephemeral ECDH P-256 exchange and HKDF-SHA-256 derive a key that wraps the content key. Header: magic + version + algorithm + recipient count + IV + one stanza per recipient.
 
-This keeps file contents and operation passwords local, uses standardized primitives already implemented by modern browsers, and avoids shipping a custom cryptographic primitive. The gated UI uses `fflate` only to zip selected folder entries before encrypting them.
+The whole header is AES-GCM additional data in both modes, so wrong passwords, wrong private keys, and any tampering fail closed with typed errors. Every operation uses fresh random salts, nonces, content keys, and ephemeral keys. The public-key construction follows the ECIES / JWE `ECDH-ES+A256KW` pattern with standard Web Crypto primitives only; it shares Age's recipient/identity model but is not Age-compatible.
+
+| Concern | Password mode | Public-key mode |
+| --- | --- | --- |
+| Who can encrypt | Anyone with the password | Anyone with a recipient public key |
+| Who can decrypt | Anyone with the password | Only holders of a listed private key |
+| Safe to commit | Ciphertext | Ciphertext and public keys |
+| Must stay secret | The password | Private keys |
+| Automation | Needs the password in both directions | Encrypt-only jobs need no secret |
+| Rotation | New password, re-encrypt every artifact | New key pair, re-encrypt, verify, retire old key |
+| Recovery | Lost password = lost data | Lost private key = lost data unless another recipient key exists |
+
+This keeps file contents, passwords, and private keys local, uses standardized primitives already implemented by modern browsers, and avoids shipping a custom cryptographic primitive. Existing password payloads remain decryptable. The gated UI uses `fflate` only to zip selected folder entries before encrypting them.
 
 See [`packages/appsafe/README.md`](./packages/appsafe/README.md) for the full API surface.
 
@@ -113,7 +123,21 @@ pnpm appsafe -- check --config appsafe.config.json
 
 The CLI package README documents the full configuration schema and safety behavior.
 
-The CLI writes encrypted artifacts beside their sources by default, never deletes sources automatically, and updates `.gitignore` only after every configured target has encrypted successfully. Existing outputs require `--force` to be replaced. Passwords are prompted without echo; `--password-stdin` and `--password-env <name>` are available for automation. Use `--dry-run` to validate paths and preview changes without writing files.
+For public-key mode, create a version-2 config and a key pair. The public key is safe to commit; the private key is added to `.gitignore` automatically:
+
+```bash
+pnpm appsafe -- init --mode public-key
+pnpm appsafe -- keygen            # .appsafe/key.pub + .appsafe/key.txt
+pnpm appsafe -- encrypt           # needs only the public key
+pnpm appsafe -- decrypt           # needs the private key
+pnpm appsafe -- rekey             # migrate artifacts to the configured mode or keys
+```
+
+Modes can be set globally and overridden per file or folder target, so a private application folder and an individual file can use different methods in one config. Version-1 password configs keep working unchanged.
+
+The CLI writes encrypted artifacts beside their sources by default, never deletes sources automatically, and updates `.gitignore` only after every configured target has encrypted successfully. Existing outputs require `--force` to be replaced, and `keygen` never overwrites a private key. Passwords are prompted without echo; `--password-stdin` and `--password-env <name>` are available for automation. Private keys come from the configured `privateKeyFile`, `--private-key-file`, `--private-key-stdin`, or `--private-key-env <name>` — never from literal command-line values. Use `--dry-run` to validate paths and preview changes without writing files.
+
+Key custody, backup, loss, rotation, and CI examples are documented in the CLI README.
 
 Folder targets are archived as ZIP data before encryption. Symbolic links are rejected, and archive extraction validates paths before restoring them. See [`packages/appsafe-cli/README.md`](./packages/appsafe-cli/README.md) for the configuration schema and CLI details.
 
@@ -126,6 +150,20 @@ import { decryptText, encryptText } from "@asafarim/appsafe";
 
 const payload = await encryptText("private note", password);
 const plaintext = await decryptText(payload, password);
+```
+
+Or encrypt for a public key so only the private-key holder can decrypt:
+
+```ts
+import {
+  decryptTextWithPrivateKey,
+  encryptTextForRecipients,
+  generateKeyPair,
+} from "@asafarim/appsafe";
+
+const { publicKey, privateKey } = await generateKeyPair();
+const payload = await encryptTextForRecipients("private note", publicKey);
+const plaintext = await decryptTextWithPrivateKey(payload, privateKey);
 ```
 
 Use the Node.js package when your application needs configured filesystem workflows:
