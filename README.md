@@ -51,6 +51,8 @@ Run from the repository root.
    - `WEB_ORIGIN` — public origin of the web app, used for CORS and cookie scoping.
    - Optional: `COOKIE_SAME_SITE`, `COOKIE_SECURE`, `TRUST_PROXY` for production deployments.
 
+   For local development, copy `apps/api/.env.example` to `apps/api/.env` and replace the placeholders. The API `dev` script loads that file automatically (Node's `--env-file-if-exists`, Node 22.9+); variables already set in your shell also work. The value of `APP_ACCESS_CODE` is the "Secret access code" you enter in the web app.
+
    Do not put `APP_ACCESS_CODE` or `SESSION_SECRET` in the web app environment or commit them.
 
 3. Build the crypto core (required by both apps):
