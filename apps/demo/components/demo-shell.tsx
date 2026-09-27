@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -9,15 +10,25 @@ import {
 import {
   AppSafeCryptoError,
   DEFAULT_PBKDF2_ITERATIONS,
+  type AppSafeEncryptionMode,
   decryptBytes,
+  decryptBytesWithPrivateKey,
   decryptText,
+  decryptTextWithPrivateKey,
   encryptBytes,
+  encryptBytesForRecipients,
   encryptText,
+  encryptTextForRecipients,
+  generateKeyPair,
+  getKeyFingerprint,
+  inspectAppSafePayload,
   isAppSafePayload,
 } from "@asafarim/appsafe";
+import { FailureLab } from "./failure-lab";
+import { MethodComparison, MethodGuide } from "./method-guide";
 
 type DemoMode = "text" | "file";
-type BusyState = "encrypting" | "decrypting" | null;
+type BusyState = "encrypting" | "decrypting" | "generating" | null;
 type Notice = {
   kind: "success" | "error" | "info";
   text: string;
@@ -29,17 +40,86 @@ type Artifact = {
 type DemoShellProps = {
   version: string;
 };
+type Recipe = {
+  title: string;
+  code: string;
+};
 
 const APP_SAFE_EXTENSION = ".appsafe";
-const TEXT_EXAMPLE = `import { decryptText, encryptText } from "@asafarim/appsafe";
+const RECIPES: Recipe[] = [
+  {
+    title: "Password / text round-trip",
+    code: `import { decryptText, encryptText } from "@asafarim/appsafe";
 
 const encrypted = await encryptText("private note", password);
-const plaintext = await decryptText(encrypted, password);`;
-const FILE_EXAMPLE = `import { decryptBytes, encryptBytes } from "@asafarim/appsafe";
+const plaintext = await decryptText(encrypted, password);`,
+  },
+  {
+    title: "Password / file round-trip",
+    code: `import { decryptBytes, encryptBytes } from "@asafarim/appsafe";
 
 const input = new Uint8Array(await file.arrayBuffer());
 const encrypted = await encryptBytes(input, password);
-const plaintext = await decryptBytes(encrypted, password);`;
+const plaintext = await decryptBytes(encrypted, password);`,
+  },
+  {
+    title: "Public key / generate a key pair",
+    code: `import { generateKeyPair } from "@asafarim/appsafe";
+
+const { publicKey, privateKey, fingerprint } = await generateKeyPair();
+// publicKey  -> safe to commit or share (for example .appsafe/key.pub)
+// privateKey -> secret: store it privately, never commit or log it`,
+  },
+  {
+    title: "Public key / file round-trip",
+    code: `import {
+  decryptBytesWithPrivateKey,
+  encryptBytesForRecipients,
+} from "@asafarim/appsafe";
+
+const input = new Uint8Array(await file.arrayBuffer());
+// Anyone with the public key can encrypt...
+const encrypted = await encryptBytesForRecipients(input, publicKey);
+// ...only the private-key holder can decrypt.
+const plaintext = await decryptBytesWithPrivateKey(encrypted, privateKey);`,
+  },
+  {
+    title: "Public key / multiple recipients",
+    code: `import { encryptTextForRecipients } from "@asafarim/appsafe";
+
+const encrypted = await encryptTextForRecipients(note, [
+  ownerPublicKey,
+  deployPublicKey,
+]);
+// Each recipient decrypts with its own private key.`,
+  },
+  {
+    title: "Detect the mode, then decrypt",
+    code: `import {
+  AppSafeCryptoError,
+  decryptBytes,
+  decryptBytesWithPrivateKey,
+  inspectAppSafePayload,
+} from "@asafarim/appsafe";
+
+try {
+  const info = inspectAppSafePayload(payload);
+  const plaintext = info.mode === "password"
+    ? await decryptBytes(payload, password)
+    : await decryptBytesWithPrivateKey(payload, privateKey);
+} catch (error) {
+  if (error instanceof AppSafeCryptoError) {
+    console.warn(error.code); // e.g. NO_MATCHING_KEY, never the key itself
+  }
+}`,
+  },
+];
+const CLI_RECIPE = `# Public-key mode for a private app folder (CLI)
+appsafe init --mode public-key   # config: .appsafe/key.pub + .appsafe/key.txt
+appsafe keygen                   # private key is added to .gitignore
+appsafe encrypt                  # needs only the public key
+appsafe decrypt                  # needs the private key
+appsafe rekey                    # migrate password artifacts to the configured mode`;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
@@ -55,6 +135,17 @@ function formatBytes(bytes: number): string {
 
 function hexPreview(bytes: Uint8Array): string {
   return Array.from(bytes.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join(" ");
+}
+
+function describePayload(bytes: Uint8Array): string {
+  try {
+    const info = inspectAppSafePayload(bytes);
+    return info.mode === "password"
+      ? `AppSafe v1 / password / ${info.iterations.toLocaleString("en-US")} rounds`
+      : `AppSafe v2 / public key / ${info.recipients.length} recipient${info.recipients.length === 1 ? "" : "s"}`;
+  } catch {
+    return "Not a valid AppSafe payload";
+  }
 }
 
 function downloadBytes(data: Uint8Array, fileName: string, type: string): void {
@@ -75,22 +166,21 @@ function outputName(fileName: string): string {
   return `decrypted-${fileName}`;
 }
 
+const ERROR_MESSAGES: Partial<Record<AppSafeCryptoError["code"], string>> = {
+  INVALID_PASSWORD_OR_DATA: "The password or encrypted payload is invalid.",
+  INVALID_KEY_OR_DATA: "The private key or encrypted payload is invalid.",
+  NO_MATCHING_KEY: "This private key is not a recipient of the payload.",
+  MODE_MISMATCH: "The payload uses the other encryption method. Switch methods to decrypt it.",
+  INVALID_KEY: "The key is not a valid AppSafe key of the expected kind.",
+  INVALID_PAYLOAD: "This is not a supported AppSafe payload.",
+  INVALID_TEXT: "The decrypted bytes are not valid UTF-8 text.",
+};
+
 function operationError(error: unknown): string {
-  if (error instanceof AppSafeCryptoError) {
-    if (error.code === "INVALID_PASSWORD_OR_DATA") {
-      return "The password or encrypted payload is invalid.";
-    }
-
-    if (error.code === "INVALID_PAYLOAD") {
-      return "This is not a supported AppSafe payload.";
-    }
-
-    if (error.code === "INVALID_TEXT") {
-      return "The decrypted bytes are not valid UTF-8 text.";
-    }
-  }
-
-  return "The operation could not be completed in this browser.";
+  const message = error instanceof AppSafeCryptoError ? ERROR_MESSAGES[error.code] : undefined;
+  return message
+    ? `${message} (${(error as AppSafeCryptoError).code})`
+    : "The operation could not be completed in this browser.";
 }
 
 function AppMark() {
@@ -127,8 +217,13 @@ function ArrowIcon() {
 }
 
 export function DemoShell({ version }: DemoShellProps) {
+  const [method, setMethod] = useState<AppSafeEncryptionMode>("password");
   const [mode, setMode] = useState<DemoMode>("text");
   const [password, setPassword] = useState("");
+  const [publicKey, setPublicKey] = useState("");
+  const [privateKey, setPrivateKey] = useState("");
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
   const [textValue, setTextValue] = useState("This note never leaves the browser.");
   const [textPayload, setTextPayload] = useState<Uint8Array | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -138,70 +233,115 @@ export function DemoShell({ version }: DemoShellProps) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const encryptedFileInputRef = useRef<HTMLInputElement>(null);
+  const usesPassword = method === "password";
+  const canEncrypt = usesPassword ? password.length > 0 : publicKey.trim().length > 0;
+  const canDecrypt = usesPassword ? password.length > 0 : privateKey.trim().length > 0;
+  const encryptLabel = usesPassword ? "encrypt" : "encrypt…ForRecipients";
+  const decryptLabel = usesPassword ? "decrypt" : "decrypt…WithPrivateKey";
 
-  const encryptDemoText = useCallback(async () => {
-    if (!textValue || !password) {
-      setNotice({ kind: "error", text: "Enter text and a password first." });
+  useEffect(() => {
+    let current = true;
+    if (!publicKey.trim()) {
+      setFingerprint(null);
       return;
     }
+    getKeyFingerprint(publicKey)
+      .then((value) => current && setFingerprint(value))
+      .catch(() => current && setFingerprint("invalid public key"));
+    return () => {
+      current = false;
+    };
+  }, [publicKey]);
 
-    setBusy("encrypting");
+  const run = useCallback(async (state: Exclude<BusyState, null>, operation: () => Promise<void>) => {
+    setBusy(state);
     setNotice(null);
-
     try {
-      const payload = await encryptText(textValue, password);
-      setTextPayload(payload);
-      downloadBytes(payload, `message.txt${APP_SAFE_EXTENSION}`, "application/octet-stream");
-      setNotice({
-        kind: "success",
-        text: `Encrypted ${formatBytes(payload.byteLength)} locally and downloaded the payload.`,
-      });
+      await operation();
     } catch (error) {
       setNotice({ kind: "error", text: operationError(error) });
     } finally {
       setBusy(null);
     }
-  }, [password, textValue]);
+  }, []);
 
-  const decryptDemoText = useCallback(async () => {
-    if (!textPayload || !password) {
-      setNotice({ kind: "error", text: "Create or choose an encrypted payload first." });
-      return;
+  const generateDemoKeys = useCallback(
+    () =>
+      run("generating", async () => {
+        const pair = await generateKeyPair();
+        setPublicKey(pair.publicKey);
+        setPrivateKey(pair.privateKey);
+        setShowPrivateKey(false);
+        setNotice({
+          kind: "success",
+          text: `Generated an ephemeral P-256 key pair (${pair.fingerprint}). It exists only in this tab's memory.`,
+        });
+      }),
+    [run]
+  );
+
+  const encryptDemoText = useCallback(
+    () =>
+      run("encrypting", async () => {
+        const payload = usesPassword
+          ? await encryptText(textValue, password)
+          : await encryptTextForRecipients(textValue, publicKey);
+        setTextPayload(payload);
+        downloadBytes(payload, `message.txt${APP_SAFE_EXTENSION}`, "application/octet-stream");
+        setNotice({
+          kind: "success",
+          text: `Encrypted ${formatBytes(payload.byteLength)} locally with ${usesPassword ? "encryptText()" : "encryptTextForRecipients()"} and downloaded the payload.`,
+        });
+      }),
+    [password, publicKey, run, textValue, usesPassword]
+  );
+
+  const decryptDemoText = useCallback(
+    () =>
+      run("decrypting", async () => {
+        if (!textPayload) {
+          return;
+        }
+        setTextValue(
+          usesPassword
+            ? await decryptText(textPayload, password)
+            : await decryptTextWithPrivateKey(textPayload, privateKey)
+        );
+        setNotice({
+          kind: "success",
+          text: `Decrypted locally with ${usesPassword ? "decryptText()" : "decryptTextWithPrivateKey()"}.`,
+        });
+      }),
+    [password, privateKey, run, textPayload, usesPassword]
+  );
+
+  const readPayloadFile = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return null;
     }
 
-    setBusy("decrypting");
-    setNotice(null);
+    const bytes = new Uint8Array(await file.arrayBuffer());
 
-    try {
-      setTextValue(await decryptText(textPayload, password));
-      setNotice({ kind: "success", text: "Decrypted locally with decryptText()." });
-    } catch (error) {
-      setNotice({ kind: "error", text: operationError(error) });
-    } finally {
-      setBusy(null);
+    if (!isAppSafePayload(bytes)) {
+      setNotice({ kind: "error", text: "Choose a valid .appsafe payload." });
+      return null;
     }
-  }, [password, textPayload]);
+
+    setNotice({ kind: "info", text: `${file.name}: ${describePayload(bytes)}.` });
+    return { bytes, name: file.name };
+  }, []);
 
   const handleEncryptedTextFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      event.target.value = "";
-
-      if (!file) {
-        return;
+      const artifact = await readPayloadFile(event);
+      if (artifact) {
+        setTextPayload(artifact.bytes);
       }
-
-      const bytes = new Uint8Array(await file.arrayBuffer());
-
-      if (!isAppSafePayload(bytes)) {
-        setNotice({ kind: "error", text: "Choose a valid .appsafe payload." });
-        return;
-      }
-
-      setTextPayload(bytes);
-      setNotice({ kind: "info", text: `${file.name} is ready for decryptText().` });
     },
-    []
+    [readPayloadFile]
   );
 
   const handleSourceFile = useCallback((event: ChangeEvent<HTMLInputElement>) => {
@@ -214,83 +354,59 @@ export function DemoShell({ version }: DemoShellProps) {
 
   const handleEncryptedFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      event.target.value = "";
-
-      if (!file) {
-        return;
+      const artifact = await readPayloadFile(event);
+      if (artifact) {
+        setFilePayload(artifact);
+        setDecryptedFile(null);
       }
-
-      const bytes = new Uint8Array(await file.arrayBuffer());
-
-      if (!isAppSafePayload(bytes)) {
-        setNotice({ kind: "error", text: "Choose a valid .appsafe payload." });
-        return;
-      }
-
-      setFilePayload({ bytes, name: file.name });
-      setDecryptedFile(null);
-      setNotice({ kind: "info", text: `${file.name} is ready for decryptBytes().` });
     },
-    []
+    [readPayloadFile]
   );
 
-  const encryptDemoFile = useCallback(async () => {
-    if (!selectedFile || !password) {
-      setNotice({ kind: "error", text: "Choose a file and enter a password first." });
-      return;
-    }
+  const encryptDemoFile = useCallback(
+    () =>
+      run("encrypting", async () => {
+        if (!selectedFile) {
+          return;
+        }
+        const input = new Uint8Array(await selectedFile.arrayBuffer());
+        const payload = usesPassword
+          ? await encryptBytes(input, password)
+          : await encryptBytesForRecipients(input, publicKey);
+        const artifact = {
+          bytes: payload,
+          name: `${selectedFile.name}${APP_SAFE_EXTENSION}`,
+        };
+        setFilePayload(artifact);
+        setDecryptedFile(null);
+        downloadBytes(payload, artifact.name, "application/octet-stream");
+        setNotice({
+          kind: "success",
+          text: `Encrypted ${selectedFile.name} locally and downloaded the payload.`,
+        });
+      }),
+    [password, publicKey, run, selectedFile, usesPassword]
+  );
 
-    setBusy("encrypting");
-    setNotice(null);
-
-    try {
-      const payload = await encryptBytes(
-        new Uint8Array(await selectedFile.arrayBuffer()),
-        password
-      );
-      const artifact = {
-        bytes: payload,
-        name: `${selectedFile.name}${APP_SAFE_EXTENSION}`,
-      };
-      setFilePayload(artifact);
-      setDecryptedFile(null);
-      downloadBytes(payload, artifact.name, "application/octet-stream");
-      setNotice({
-        kind: "success",
-        text: `Encrypted ${selectedFile.name} locally and downloaded the payload.`,
-      });
-    } catch (error) {
-      setNotice({ kind: "error", text: operationError(error) });
-    } finally {
-      setBusy(null);
-    }
-  }, [password, selectedFile]);
-
-  const decryptDemoFile = useCallback(async () => {
-    if (!filePayload || !password) {
-      setNotice({ kind: "error", text: "Choose an encrypted payload and enter its password." });
-      return;
-    }
-
-    setBusy("decrypting");
-    setNotice(null);
-
-    try {
-      const bytes = await decryptBytes(filePayload.bytes, password);
-      const artifact = { bytes, name: outputName(filePayload.name) };
-      setDecryptedFile(artifact);
-      downloadBytes(bytes, artifact.name, "application/octet-stream");
-      setNotice({
-        kind: "success",
-        text: `Decrypted ${filePayload.name} locally and downloaded the result.`,
-      });
-    } catch (error) {
-      setNotice({ kind: "error", text: operationError(error) });
-    } finally {
-      setBusy(null);
-    }
-  }, [filePayload, password]);
+  const decryptDemoFile = useCallback(
+    () =>
+      run("decrypting", async () => {
+        if (!filePayload) {
+          return;
+        }
+        const bytes = usesPassword
+          ? await decryptBytes(filePayload.bytes, password)
+          : await decryptBytesWithPrivateKey(filePayload.bytes, privateKey);
+        const artifact = { bytes, name: outputName(filePayload.name) };
+        setDecryptedFile(artifact);
+        downloadBytes(bytes, artifact.name, "application/octet-stream");
+        setNotice({
+          kind: "success",
+          text: `Decrypted ${filePayload.name} locally and downloaded the result.`,
+        });
+      }),
+    [filePayload, password, privateKey, run, usesPassword]
+  );
 
   return (
     <main className="demo-shell">
@@ -328,6 +444,8 @@ export function DemoShell({ version }: DemoShellProps) {
           </nav>
           <nav className="demo-nav" aria-label="Demo navigation">
             <a href="#playground">Playground</a>
+            <a className="demo-nav-secondary" href="#methods">Methods</a>
+            <a className="demo-nav-secondary" href="#failures">Failures</a>
             <a href="#api">API examples</a>
             <span className="demo-version">v{version}</span>
           </nav>
@@ -339,8 +457,9 @@ export function DemoShell({ version }: DemoShellProps) {
           <p className="demo-eyebrow">NPM PACKAGE / HANDS-ON EXAMPLE</p>
           <h1>See the package work.</h1>
           <p className="demo-hero-description">
-            A small, public playground for <code>@asafarim/appsafe</code>. Run the
-            same text and byte-level calls you would ship in your own browser app.
+            A small, public playground for <code>@asafarim/appsafe</code>. Encrypt
+            with a shared password or for a public key, then decrypt with the
+            matching secret — the same calls you would ship in your own app.
           </p>
           <div className="demo-hero-actions">
             <a className="demo-button demo-button-primary" href="#playground">
@@ -352,6 +471,7 @@ export function DemoShell({ version }: DemoShellProps) {
           <div className="demo-chip-row" aria-label="Package properties">
             <span className="demo-chip">Web Crypto API</span>
             <span className="demo-chip">AES-256-GCM</span>
+            <span className="demo-chip">PBKDF2 or ECDH P-256</span>
             <span className="demo-chip">TypeScript</span>
           </div>
         </div>
@@ -363,10 +483,11 @@ export function DemoShell({ version }: DemoShellProps) {
             <span className="terminal-path">appsafe-demo</span>
           </div>
           <div className="demo-terminal-body">
-            <p><span className="terminal-purple">import</span> &#123; encryptBytes &#125;</p>
-            <p><span className="terminal-purple">from</span> <span className="terminal-green">&quot;@asafarim/appsafe&quot;</span>;</p>
+            <p><span className="terminal-comment">// password mode</span></p>
+            <p><span className="terminal-purple">await</span> encryptBytes(file, password);</p>
             <p>&nbsp;</p>
-            <p><span className="terminal-purple">const</span> payload = <span className="terminal-purple">await</span> encryptBytes(file, password);</p>
+            <p><span className="terminal-comment">// public-key mode</span></p>
+            <p><span className="terminal-purple">await</span> encryptBytesForRecipients(file, publicKey);</p>
             <p><span className="terminal-comment">// stays in this browser tab</span></p>
           </div>
           <div className="demo-terminal-footer">
@@ -384,58 +505,129 @@ export function DemoShell({ version }: DemoShellProps) {
           </div>
           <p>
             This demo has no owner gate because its purpose is to document the
-            reusable npm API. All transforms still happen in browser memory.
+            reusable npm API. Every transform and every generated key stays in
+            browser memory.
           </p>
         </div>
 
         <div className="demo-card">
-          <div className="demo-mode-tabs" role="tablist" aria-label="Demo input type">
-            <button
-              className={`demo-mode-tab ${mode === "text" ? "demo-mode-tab-active" : ""}`}
-              type="button"
-              role="tab"
-              aria-selected={mode === "text"}
-              onClick={() => {
-                setMode("text");
-                setNotice(null);
-              }}
-            >
-              Text API
-            </button>
-            <button
-              className={`demo-mode-tab ${mode === "file" ? "demo-mode-tab-active" : ""}`}
-              type="button"
-              role="tab"
-              aria-selected={mode === "file"}
-              onClick={() => {
-                setMode("file");
-                setNotice(null);
-              }}
-            >
-              File API
-            </button>
+          <div className="demo-tab-bar">
+            <div className="demo-mode-tabs" role="tablist" aria-label="Encryption method">
+              {(["password", "public-key"] as const).map((value) => (
+                <button
+                  key={value}
+                  className={`demo-mode-tab ${method === value ? "demo-mode-tab-active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={method === value}
+                  onClick={() => {
+                    setMethod(value);
+                    setNotice(null);
+                  }}
+                >
+                  {value === "password" ? "Password" : "Public / private key"}
+                </button>
+              ))}
+            </div>
+            <div className="demo-mode-tabs" role="tablist" aria-label="Demo input type">
+              {(["text", "file"] as const).map((value) => (
+                <button
+                  key={value}
+                  className={`demo-mode-tab ${mode === value ? "demo-mode-tab-active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === value}
+                  onClick={() => {
+                    setMode(value);
+                    setNotice(null);
+                  }}
+                >
+                  {value === "text" ? "Text API" : "File API"}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="demo-control-bar">
-            <div className="demo-password-control">
-              <label className="demo-field-label" htmlFor="demo-password">
-                Operation password
-              </label>
-              <input
-                id="demo-password"
-                className="demo-input"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Only used by this browser tab"
-                autoComplete="new-password"
-              />
+          {usesPassword ? (
+            <div className="demo-control-bar">
+              <div className="demo-password-control">
+                <label className="demo-field-label" htmlFor="demo-password">
+                  Operation password <span className="demo-badge demo-badge-secret">secret</span>
+                </label>
+                <input
+                  id="demo-password"
+                  className="demo-input"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Only used by this browser tab"
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="demo-security-note">
+                <span className="demo-security-dot" />
+                <span>Not sent over the network</span>
+              </div>
             </div>
-            <div className="demo-security-note">
-              <span className="demo-security-dot" />
-              <span>Not sent over the network</span>
+          ) : (
+            <div className="demo-control-bar demo-key-bar">
+              <div className="demo-key-grid">
+                <div>
+                  <label className="demo-field-label" htmlFor="demo-public-key">
+                    Recipient public key <span className="demo-badge demo-badge-safe">safe to share</span>
+                  </label>
+                  <input
+                    id="demo-public-key"
+                    className="demo-input demo-input-mono"
+                    value={publicKey}
+                    onChange={(event) => setPublicKey(event.target.value)}
+                    placeholder="appsafe-pub-p256:… (encrypts)"
+                    spellCheck="false"
+                    autoComplete="off"
+                  />
+                  <small className="demo-key-meta">
+                    Fingerprint: {fingerprint ?? "—"}
+                  </small>
+                </div>
+                <div>
+                  <label className="demo-field-label" htmlFor="demo-private-key">
+                    Private key <span className="demo-badge demo-badge-secret">secret</span>
+                  </label>
+                  <div className="demo-inline-control">
+                    <input
+                      id="demo-private-key"
+                      className="demo-input demo-input-mono"
+                      type={showPrivateKey ? "text" : "password"}
+                      value={privateKey}
+                      onChange={(event) => setPrivateKey(event.target.value)}
+                      placeholder="APPSAFE-PRIVATE-KEY-P256:… (decrypts)"
+                      spellCheck="false"
+                      autoComplete="off"
+                    />
+                    <button
+                      className="demo-copy-button"
+                      type="button"
+                      onClick={() => setShowPrivateKey((value) => !value)}
+                      disabled={!privateKey}
+                    >
+                      {showPrivateKey ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                  <small className="demo-key-meta">
+                    Ephemeral: cleared on reload, never stored or transmitted.
+                  </small>
+                </div>
+              </div>
+              <button
+                className="demo-button demo-button-secondary"
+                type="button"
+                onClick={() => void generateDemoKeys()}
+                disabled={busy !== null}
+              >
+                {busy === "generating" ? "Generating…" : "generateKeyPair()"}
+              </button>
             </div>
-          </div>
+          )}
 
           {mode === "text" ? (
             <div className="demo-playground-grid">
@@ -456,17 +648,17 @@ export function DemoShell({ version }: DemoShellProps) {
                     className="demo-button demo-button-primary"
                     type="button"
                     onClick={() => void encryptDemoText()}
-                    disabled={busy !== null || !textValue || !password}
+                    disabled={busy !== null || !textValue || !canEncrypt}
                   >
-                    {busy === "encrypting" ? "Encrypting…" : "encryptText()"}
+                    {busy === "encrypting" ? "Encrypting…" : `${encryptLabel.replace("…", "Text")}()`}
                   </button>
                   <button
                     className="demo-button demo-button-secondary"
                     type="button"
                     onClick={() => void decryptDemoText()}
-                    disabled={busy !== null || !textPayload || !password}
+                    disabled={busy !== null || !textPayload || !canDecrypt}
                   >
-                    {busy === "decrypting" ? "Decrypting…" : "decryptText()"}
+                    {busy === "decrypting" ? "Decrypting…" : `${decryptLabel.replace("…", "Text")}()`}
                   </button>
                 </div>
               </div>
@@ -482,7 +674,7 @@ export function DemoShell({ version }: DemoShellProps) {
                     <>
                       <strong>{formatBytes(textPayload.byteLength)}</strong>
                       <span>{hexPreview(textPayload)} …</span>
-                      <small>AppSafe binary envelope / authenticated</small>
+                      <small>{describePayload(textPayload)} / authenticated</small>
                     </>
                   ) : (
                     <span>Encrypt text to inspect the payload bytes.</span>
@@ -503,8 +695,9 @@ export function DemoShell({ version }: DemoShellProps) {
                   Choose .appsafe payload
                 </button>
                 <p className="demo-help-text">
-                  The decrypt call uses the in-memory payload or a payload selected
-                  from disk. Both paths use the same package function.
+                  Payloads are self-describing: <code>inspectAppSafePayload()</code>{" "}
+                  reports the mode, so decrypting with the wrong method fails
+                  with <code>MODE_MISMATCH</code> instead of guessing.
                 </p>
               </div>
             </div>
@@ -536,17 +729,17 @@ export function DemoShell({ version }: DemoShellProps) {
                     className="demo-button demo-button-primary"
                     type="button"
                     onClick={() => void encryptDemoFile()}
-                    disabled={busy !== null || !selectedFile || !password}
+                    disabled={busy !== null || !selectedFile || !canEncrypt}
                   >
-                    {busy === "encrypting" ? "Encrypting…" : "encryptBytes()"}
+                    {busy === "encrypting" ? "Encrypting…" : `${encryptLabel.replace("…", "Bytes")}()`}
                   </button>
                   <button
                     className="demo-button demo-button-secondary"
                     type="button"
                     onClick={() => void decryptDemoFile()}
-                    disabled={busy !== null || !filePayload || !password}
+                    disabled={busy !== null || !filePayload || !canDecrypt}
                   >
-                    {busy === "decrypting" ? "Decrypting…" : "decryptBytes()"}
+                    {busy === "decrypting" ? "Decrypting…" : `${decryptLabel.replace("…", "Bytes")}()`}
                   </button>
                 </div>
                 <input
@@ -574,7 +767,7 @@ export function DemoShell({ version }: DemoShellProps) {
                   </div>
                   <div className="demo-file-state-row">
                     <span>Format check</span>
-                    <strong>{filePayload ? "AppSafe v1" : "—"}</strong>
+                    <strong>{filePayload ? describePayload(filePayload.bytes) : "—"}</strong>
                   </div>
                   <div className="demo-file-state-row">
                     <span>Plaintext</span>
@@ -592,7 +785,7 @@ export function DemoShell({ version }: DemoShellProps) {
                 ) : null}
                 <p className="demo-help-text">
                   The same byte functions work with images, PDFs, archives, or
-                  any other file a browser can read.
+                  any other file a browser can read. Folders are a CLI feature.
                 </p>
               </div>
             </div>
@@ -606,41 +799,90 @@ export function DemoShell({ version }: DemoShellProps) {
         </div>
       </section>
 
-      <section className="demo-section demo-width" id="api">
+      <section className="demo-section demo-width" id="methods">
         <div className="demo-section-heading">
           <div>
-            <p className="demo-eyebrow">02 / COPYABLE RECIPES</p>
-            <h2>Three calls are enough.</h2>
+            <p className="demo-eyebrow">02 / TWO METHODS</p>
+            <h2>Same core, different custody.</h2>
           </div>
           <p>
-            Install the package, pass a password you manage, and keep the returned
-            bytes wherever your browser app needs them.
+            Both methods finish with AES-256-GCM over an authenticated,
+            versioned header. They differ in where the key comes from and who
+            must keep a secret.
           </p>
         </div>
-        <div className="demo-code-grid">
-          <CodeCard title="Text round-trip" code={TEXT_EXAMPLE} />
-          <CodeCard title="File round-trip" code={FILE_EXAMPLE} />
+        <MethodGuide />
+        <div className="demo-subsection">
+          <h3>When to choose each method</h3>
+          <MethodComparison />
         </div>
       </section>
 
-      <section className="demo-principles demo-width">
+      <section className="demo-section demo-width" id="failures">
+        <div className="demo-section-heading">
+          <div>
+            <p className="demo-eyebrow">03 / FAILURE LAB</p>
+            <h2>Wrong inputs fail closed.</h2>
+          </div>
+          <p>
+            Authentication covers the header, every recipient entry, and the
+            ciphertext. Run the checks to see the exact error codes your app
+            should handle.
+          </p>
+        </div>
+        <FailureLab />
+      </section>
+
+      <section className="demo-section demo-width" id="api">
+        <div className="demo-section-heading">
+          <div>
+            <p className="demo-eyebrow">04 / COPYABLE RECIPES</p>
+            <h2>A few calls are enough.</h2>
+          </div>
+          <p>
+            Install the package, supply a password or keys you manage, and keep
+            the returned bytes wherever your app needs them.
+          </p>
+        </div>
+        <div className="demo-code-grid">
+          {RECIPES.map((recipe) => (
+            <CodeCard key={recipe.title} title={recipe.title} code={recipe.code} />
+          ))}
+        </div>
+        <div className="demo-subsection">
+          <CodeCard title="CLI / encrypt a private app folder" code={CLI_RECIPE} />
+        </div>
+      </section>
+
+      <section className="demo-principles demo-width" aria-label="Runtime support">
         <div className="demo-principle">
-          <span className="demo-principle-index">A /</span>
-          <h3>Install</h3>
+          <span className="demo-principle-index">A / BROWSER CORE</span>
+          <h3>Both methods</h3>
           <code>pnpm add @asafarim/appsafe</code>
-          <p>Works in browser runtimes with Web Crypto support.</p>
+          <p>
+            Password and public-key encryption, key generation, and payload
+            inspection run anywhere Web Crypto supports AES-GCM, PBKDF2, HKDF,
+            and ECDH P-256: evergreen browsers, Node 20+, and Deno.
+          </p>
         </div>
         <div className="demo-principle">
-          <span className="demo-principle-index">B /</span>
-          <h3>Encrypt</h3>
-          <code>await encryptBytes(data, password)</code>
-          <p>Returns a portable Uint8Array payload with authenticated metadata.</p>
+          <span className="demo-principle-index">B / CLI ONLY</span>
+          <h3>Files and folders</h3>
+          <code>pnpm add -D @asafarim/appsafe-cli</code>
+          <p>
+            Key files, folder archives, per-target modes, <code>.gitignore</code>{" "}
+            management, and <code>rekey</code> migration need a filesystem, so
+            they live in the Node.js CLI.
+          </p>
         </div>
         <div className="demo-principle">
-          <span className="demo-principle-index">C /</span>
-          <h3>Decrypt</h3>
-          <code>await decryptBytes(payload, password)</code>
-          <p>Wrong passwords and modified payloads fail closed.</p>
+          <span className="demo-principle-index">C / FORMAT</span>
+          <h3>Not Age-compatible</h3>
+          <code>ECDH-P256+HKDF-SHA256+A256GCM</code>
+          <p>
+            Uses the same recipient/identity model as Age, built only from Web
+            Crypto primitives. Age files and keys cannot be read or written.
+          </p>
         </div>
       </section>
 

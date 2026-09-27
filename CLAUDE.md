@@ -10,7 +10,7 @@ AppSafe is a PNPM monorepo built around a browser-local encryption toolkit. The 
 
 | Path | Package | Purpose |
 | --- | --- | --- |
-| `packages/appsafe` | `@asafarim/appsafe` | npm-publishable Web Crypto encryption core (AES-256-GCM + PBKDF2). |
+| `packages/appsafe` | `@asafarim/appsafe` | npm-publishable Web Crypto encryption core (AES-256-GCM with PBKDF2 password or ECDH P-256 public-key modes). |
 | `packages/shared-tokens` | `@asafarim/shared-tokens` | Local design-token stylesheet consumed by all UIs. |
 | `apps/web` | `@asafarim/appsafe-web` | Owner-gated Next.js App Router UI. |
 | `apps/api` | `@asafarim/appsafe-api` | Express gate service; verifies access code, issues signed cookie. |
@@ -51,21 +51,26 @@ Per-app scripts live in each `apps/*/package.json` and can be run via `pnpm --fi
 ### Crypto package (`packages/appsafe`)
 
 - Browser-first: relies on `globalThis.crypto.subtle`. No Node-specific imports.
-- AES-256-GCM with PBKDF2-HMAC-SHA-256 key derivation.
+- Two selectable modes, both ending in AES-256-GCM: password (PBKDF2-HMAC-SHA-256) and public-key (ECDH P-256 + HKDF-SHA-256 key wrapping, 1–16 recipients).
 - Default 600,000 PBKDF2 iterations; callers may pass `iterations` in `[100_000, 2_000_000]`.
-- Binary envelope: `ASAFE` magic (5 bytes) + version (1) + salt (16) + IV (12) + iterations (4, big-endian) + ciphertext+tag. Header is authenticated as AES-GCM additional data.
-- All exported functions throw `AppSafeCryptoError` with a typed `code` field — never rethrow raw `Error`.
-- Wrong passwords and tampered payloads must fail closed.
+- Password envelope (version 1): `ASAFE` magic (5 bytes) + version (1) + salt (16) + IV (12) + iterations (4, big-endian) + ciphertext+tag.
+- Public-key envelope (version 2): `ASAFE` magic (5) + version (1) + algorithm (1) + recipient count (1) + IV (12) + 141-byte stanza per recipient (key id, ephemeral public key, wrap IV, wrapped key) + ciphertext+tag.
+- The full header is authenticated as AES-GCM additional data in both versions. Version-1 payloads must stay decryptable.
+- Key text formats: `appsafe-pub-p256:<base64url>` and `APPSAFE-PRIVATE-KEY-P256:<base64url>`. Not Age-compatible.
+- All exported functions throw `AppSafeCryptoError` with a typed `code` field — never rethrow raw `Error`. Error messages never include keys or passwords.
+- Wrong passwords, wrong private keys, cross-mode use, and tampered payloads must fail closed.
 - The package performs **no network requests** and never reads files or creates downloads.
 - Published package contains only `dist`, `README.md`, and `LICENSE`.
 
 ### CLI package (`packages/appsafe-cli`)
 
 - Node.js-only filesystem layer; keep Node-specific imports out of the browser crypto package.
-- Configuration version is `1`; target paths are resolved relative to the config file.
+- Configuration versions `1` (password only) and `2` (global `encryption.mode` plus per-target overrides) are both supported; target paths are resolved relative to the config file.
 - `init` creates a placeholder configuration only when the requested config path is absent; it never overwrites an existing config.
-- Encrypt files directly and archive folders as ZIP data before encrypting.
-- Do not store passwords in configuration; prompt without echo or use explicit stdin/environment options.
+- `keygen` never overwrites a private key and adds it to `.gitignore` before writing it.
+- Encrypt files directly and archive folders as ZIP data before encrypting. Decryption selects the mode from each payload header.
+- Do not store passwords or private-key material in configuration; prompt without echo or use explicit stdin/environment/file options. Never accept secrets as literal CLI arguments.
+- `rekey` re-encrypts every artifact in memory before replacing any file.
 - Write outputs atomically, reject symbolic links and unsafe archive paths, and require `--force` for replacements.
 - Update `.gitignore` only after all configured targets encrypt successfully; never delete sources automatically.
 
@@ -88,8 +93,8 @@ Per-app scripts live in each `apps/*/package.json` and can be run via `pnpm --fi
 
 - Public, ungated reference implementation for package consumers.
 - No network requests for encryption or decryption.
-- Demonstrates `encryptText`/`decryptText`, `encryptBytes`/`decryptBytes`, and `isAppSafePayload`.
-- Includes copyable TypeScript usage recipes.
+- Demonstrates both modes: `encryptText`/`decryptText`, `encryptBytes`/`decryptBytes`, `generateKeyPair`, `encrypt*ForRecipients`/`decrypt*WithPrivateKey`, and `inspectAppSafePayload`.
+- Demo keys are ephemeral (React state only). Includes flow diagrams, a live failure lab, a mode comparison, and copyable TypeScript recipes.
 
 ## Design token compliance
 

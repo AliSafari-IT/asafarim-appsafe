@@ -10,13 +10,27 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { decryptBytes, encryptBytes } from "@asafarim/appsafe";
+import {
+  AppSafeCryptoError,
+  decryptBytes,
+  decryptBytesWithPrivateKey,
+  encryptBytes,
+  encryptBytesForRecipients,
+  generateKeyPair,
+  getKeyFingerprint,
+  getPublicKey,
+  inspectAppSafePayload,
+  type AppSafeEncryptionMode,
+  type AppSafePayloadInfo,
+} from "@asafarim/appsafe";
 import { unzipSync, zipSync } from "fflate";
 
 const MIN_PBKDF2_ITERATIONS = 100_000;
 const MAX_PBKDF2_ITERATIONS = 2_000_000;
 const ZIP_LEVEL = 6;
-const INITIAL_CONFIG = `{
+const PRIVATE_KEY_FILE_MODE = 0o600;
+const INITIAL_CONFIGS: Record<AppSafeEncryptionMode, string> = {
+  password: `{
   "version": 1,
   "targets": [
     {
@@ -33,11 +47,43 @@ const INITIAL_CONFIG = `{
     "ignoreSources": true
   }
 }
-`;
+`,
+  "public-key": `{
+  "version": 2,
+  "encryption": {
+    "mode": "public-key",
+    "publicKeyFile": "./.appsafe/key.pub",
+    "privateKeyFile": "./.appsafe/key.txt"
+  },
+  "targets": [
+    {
+      "source": "./path/to/private-app",
+      "encrypted": "./path/to/private-app.appsafe",
+      "type": "directory"
+    }
+  ],
+  "gitignore": {
+    "file": "./.gitignore",
+    "ignoreSources": true
+  }
+}
+`,
+};
 
 export const APP_SAFE_EXTENSION = ".appsafe";
+export const DEFAULT_PUBLIC_KEY_FILE = ".appsafe/key.pub";
+export const DEFAULT_PRIVATE_KEY_FILE = ".appsafe/key.txt";
+
+export type { AppSafeEncryptionMode, AppSafePayloadInfo };
 
 export type AppSafeTargetType = "file" | "directory";
+
+export interface AppSafeEncryptionSettings {
+  mode?: AppSafeEncryptionMode;
+  iterations?: number;
+  publicKeyFiles?: string[];
+  privateKeyFile?: string;
+}
 
 export interface AppSafeTarget {
   source: string;
@@ -45,14 +91,13 @@ export interface AppSafeTarget {
   restore?: string;
   type?: AppSafeTargetType;
   ignore?: boolean;
+  encryption?: AppSafeEncryptionSettings;
 }
 
 export interface AppSafeConfig {
-  version: 1;
+  version: 1 | 2;
   targets: AppSafeTarget[];
-  encryption?: {
-    iterations?: number;
-  };
+  encryption?: AppSafeEncryptionSettings;
   gitignore?: {
     file?: string;
     ignoreSources?: boolean;
@@ -64,12 +109,27 @@ export interface LoadedAppSafeConfig {
   path: string;
 }
 
+export interface AppSafeResolvedEncryption {
+  mode: AppSafeEncryptionMode;
+  iterations?: number;
+  publicKeyFiles: string[];
+  privateKeyFile?: string;
+}
+
 export interface AppSafeResolvedTarget {
   source: string;
   encrypted: string;
   restore: string;
   requestedType?: AppSafeTargetType;
   ignore: boolean;
+  encryption: AppSafeResolvedEncryption;
+}
+
+export interface AppSafeCredentials {
+  password?: string;
+  newPassword?: string;
+  privateKey?: string;
+  publicKeys?: string[];
 }
 
 export interface AppSafeOperationOptions {
@@ -82,16 +142,47 @@ export interface AppSafeOperationResult {
   encrypted: string;
   restore: string;
   type: AppSafeTargetType | "unknown";
+  mode: AppSafeEncryptionMode;
   bytes: number;
   gitignoreEntry?: string;
 }
 
+export interface AppSafeRekeyResult {
+  encrypted: string;
+  from: AppSafeEncryptionMode | "unknown";
+  to: AppSafeEncryptionMode;
+  verified: boolean;
+}
+
 export type AppSafePathStatus = "missing" | "file" | "directory" | "symlink" | "other";
+
+export interface AppSafeKeyStatus {
+  path: string;
+  status: "valid" | "missing" | "invalid";
+  fingerprint?: string;
+}
 
 export interface AppSafeTargetStatus extends AppSafeResolvedTarget {
   sourceStatus: AppSafePathStatus;
   encryptedStatus: AppSafePathStatus;
   restoreStatus: AppSafePathStatus;
+  publicKeys: AppSafeKeyStatus[];
+  privateKey?: AppSafeKeyStatus;
+  payload?: AppSafePayloadInfo | "invalid";
+}
+
+export interface AppSafeKeygenOptions {
+  force?: boolean;
+  dryRun?: boolean;
+  gitignoreFile?: string | false;
+}
+
+export interface AppSafeKeygenResult {
+  publicKeyFile: string;
+  privateKeyFile: string;
+  fingerprint?: string;
+  gitignoreFile?: string;
+  gitignoreEntry?: string;
 }
 
 export class AppSafeCliError extends Error {
@@ -102,6 +193,8 @@ export class AppSafeCliError extends Error {
 }
 
 type FileStats = Awaited<ReturnType<typeof lstat>>;
+
+type KeyCache = Map<string, Promise<string>>;
 
 type PreparedEncryptTarget = AppSafeResolvedTarget & {
   type: AppSafeTargetType;
@@ -205,6 +298,29 @@ function parseOptionalString(
   return value;
 }
 
+function parseOptionalStringArray(
+  record: Record<string, unknown>,
+  key: string,
+  label: string
+): string[] | undefined {
+  const value = record[key];
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new AppSafeCliError(`${label}.${key} must be a non-empty array of strings.`);
+  }
+
+  return value.map((item, index) => {
+    if (typeof item !== "string" || item.trim().length === 0) {
+      throw new AppSafeCliError(`${label}.${key}[${index}] must be a non-empty string.`);
+    }
+    return item;
+  });
+}
+
 function parseOptionalBoolean(
   record: Record<string, unknown>,
   key: string,
@@ -241,11 +357,35 @@ function parseOptionalNumber(
   return value;
 }
 
+function parseEncryptionSettings(value: unknown, label: string): AppSafeEncryptionSettings {
+  const record = parseRecord(value, label);
+  const mode = parseOptionalString(record, "mode", label);
+  const publicKeyFile = parseOptionalString(record, "publicKeyFile", label);
+  const publicKeyFiles = parseOptionalStringArray(record, "publicKeyFiles", label);
+
+  if (mode !== undefined && mode !== "password" && mode !== "public-key") {
+    throw new AppSafeCliError(`${label}.mode must be "password" or "public-key".`);
+  }
+
+  if (publicKeyFile !== undefined && publicKeyFiles !== undefined) {
+    throw new AppSafeCliError(
+      `Use either ${label}.publicKeyFile or ${label}.publicKeyFiles, not both.`
+    );
+  }
+
+  return {
+    mode: mode as AppSafeEncryptionMode | undefined,
+    iterations: parseOptionalNumber(record, "iterations", label),
+    publicKeyFiles: publicKeyFiles ?? (publicKeyFile === undefined ? undefined : [publicKeyFile]),
+    privateKeyFile: parseOptionalString(record, "privateKeyFile", label),
+  };
+}
+
 function parseConfig(value: unknown): AppSafeConfig {
   const record = parseRecord(value, "The configuration");
 
-  if (record.version !== 1) {
-    throw new AppSafeCliError("The configuration version must be 1.");
+  if (record.version !== 1 && record.version !== 2) {
+    throw new AppSafeCliError("The configuration version must be 1 or 2.");
   }
 
   if (!Array.isArray(record.targets) || record.targets.length === 0) {
@@ -275,16 +415,11 @@ function parseConfig(value: unknown): AppSafeConfig {
       restore,
       type: type as AppSafeTargetType | undefined,
       ignore,
+      encryption: target.encryption === undefined
+        ? undefined
+        : parseEncryptionSettings(target.encryption, `${label}.encryption`),
     };
   });
-
-  let encryption: AppSafeConfig["encryption"];
-  if (record.encryption !== undefined) {
-    const encryptionRecord = parseRecord(record.encryption, "encryption");
-    encryption = {
-      iterations: parseOptionalNumber(encryptionRecord, "iterations", "encryption"),
-    };
-  }
 
   let gitignore: AppSafeConfig["gitignore"];
   if (record.gitignore === false) {
@@ -298,9 +433,11 @@ function parseConfig(value: unknown): AppSafeConfig {
   }
 
   return {
-    version: 1,
+    version: record.version,
     targets,
-    encryption,
+    encryption: record.encryption === undefined
+      ? undefined
+      : parseEncryptionSettings(record.encryption, "encryption"),
     gitignore,
   };
 }
@@ -336,7 +473,10 @@ export async function configFileExists(configFile: string): Promise<boolean> {
   return (await tryLstat(resolve(configFile))) !== undefined;
 }
 
-export async function initializeConfig(configFile: string): Promise<boolean> {
+export async function initializeConfig(
+  configFile: string,
+  mode: AppSafeEncryptionMode = "password"
+): Promise<boolean> {
   const configPath = resolve(configFile);
 
   if (await configFileExists(configPath)) {
@@ -345,7 +485,7 @@ export async function initializeConfig(configFile: string): Promise<boolean> {
 
   try {
     await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(configPath, INITIAL_CONFIG, { flag: "wx" });
+    await writeFile(configPath, INITIAL_CONFIGS[mode], { flag: "wx" });
     return true;
   } catch (error) {
     if (isErrorWithCode(error, "EEXIST")) {
@@ -354,6 +494,28 @@ export async function initializeConfig(configFile: string): Promise<boolean> {
 
     throw wrapFileError("Unable to create", configPath, error);
   }
+}
+
+function resolveEncryption(
+  config: AppSafeConfig,
+  target: AppSafeTarget,
+  configDirectory: string
+): AppSafeResolvedEncryption {
+  const global = config.encryption ?? {};
+  const local = target.encryption ?? {};
+  const mode = local.mode ?? global.mode ?? "password";
+  const privateKeyFile = local.privateKeyFile ?? global.privateKeyFile;
+
+  return {
+    mode,
+    iterations: mode === "password" ? local.iterations ?? global.iterations : undefined,
+    publicKeyFiles: (local.publicKeyFiles ?? global.publicKeyFiles ?? []).map((file) =>
+      resolve(configDirectory, file)
+    ),
+    privateKeyFile: privateKeyFile === undefined
+      ? undefined
+      : resolve(configDirectory, privateKeyFile),
+  };
 }
 
 export function resolveConfiguredTargets(
@@ -376,23 +538,64 @@ export function resolveConfiguredTargets(
       restore,
       requestedType: target.type,
       ignore: target.ignore !== false,
+      encryption: resolveEncryption(config, target, configDirectory),
     };
   });
 }
 
 function validateEncryptionSettings(config: AppSafeConfig): void {
-  const iterations = config.encryption?.iterations;
+  const levels: Array<[string, AppSafeEncryptionSettings | undefined]> = [
+    ["encryption", config.encryption],
+    ...config.targets.map((target, index): [string, AppSafeEncryptionSettings | undefined] => [
+      `targets[${index}].encryption`,
+      target.encryption,
+    ]),
+  ];
 
-  if (
-    iterations !== undefined &&
-    (!Number.isSafeInteger(iterations) ||
-      iterations < MIN_PBKDF2_ITERATIONS ||
-      iterations > MAX_PBKDF2_ITERATIONS)
-  ) {
-    throw new AppSafeCliError(
-      `encryption.iterations must be an integer between ${MIN_PBKDF2_ITERATIONS} and ${MAX_PBKDF2_ITERATIONS}.`
-    );
+  for (const [label, settings] of levels) {
+    if (!settings) {
+      continue;
+    }
+
+    const { mode, iterations, publicKeyFiles, privateKeyFile } = settings;
+    const hasKeys = publicKeyFiles !== undefined || privateKeyFile !== undefined;
+
+    if (config.version === 1 && (mode !== undefined || hasKeys || label !== "encryption")) {
+      throw new AppSafeCliError(
+        `${label} uses encryption modes, key files, or target overrides, which require configuration version 2.`
+      );
+    }
+
+    if (
+      iterations !== undefined &&
+      (!Number.isSafeInteger(iterations) ||
+        iterations < MIN_PBKDF2_ITERATIONS ||
+        iterations > MAX_PBKDF2_ITERATIONS)
+    ) {
+      throw new AppSafeCliError(
+        `${label}.iterations must be an integer between ${MIN_PBKDF2_ITERATIONS} and ${MAX_PBKDF2_ITERATIONS}.`
+      );
+    }
+
+    if (mode === "password" && hasKeys) {
+      throw new AppSafeCliError(`${label} uses password mode and cannot set key files.`);
+    }
+
+    if (mode === "public-key" && iterations !== undefined) {
+      throw new AppSafeCliError(`${label} uses public-key mode and cannot set iterations.`);
+    }
   }
+
+  config.targets.forEach((target, index) => {
+    if (
+      resolveEncryption(config, target, ".").mode === "public-key" &&
+      !(target.encryption?.publicKeyFiles ?? config.encryption?.publicKeyFiles)?.length
+    ) {
+      throw new AppSafeCliError(
+        `targets[${index}] uses public-key mode but no publicKeyFile is configured.`
+      );
+    }
+  });
 }
 
 function getGitignorePath(
@@ -409,27 +612,40 @@ function getGitignorePath(
   );
 }
 
+function gitignoreEntryFor(
+  filePath: string,
+  directory: boolean,
+  gitignorePath: string
+): string | undefined {
+  const relativePath = relative(dirname(gitignorePath), filePath);
+
+  if (
+    relativePath === "" ||
+    isAbsolute(relativePath) ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`)
+  ) {
+    return undefined;
+  }
+
+  const normalized = relativePath.split(sep).join("/");
+  return directory ? `/${normalized}/` : `/${normalized}`;
+}
+
 function getGitignoreEntry(
   source: string,
   sourceStats: FileStats,
   gitignorePath: string
 ): string {
-  const gitignoreDirectory = dirname(gitignorePath);
-  const relativeSource = relative(gitignoreDirectory, source);
+  const entry = gitignoreEntryFor(source, sourceStats.isDirectory(), gitignorePath);
 
-  if (
-    relativeSource === "" ||
-    isAbsolute(relativeSource) ||
-    relativeSource === ".." ||
-    relativeSource.startsWith(`..${sep}`)
-  ) {
+  if (!entry) {
     throw new AppSafeCliError(
       `The source path ${source} must be inside the directory containing ${gitignorePath}.`
     );
   }
 
-  const normalized = relativeSource.split(sep).join("/");
-  return sourceStats.isDirectory() ? `/${normalized}/` : `/${normalized}`;
+  return entry;
 }
 
 async function prepareEncryptTargets(
@@ -539,6 +755,13 @@ async function prepareEncryptTargets(
         target.gitignoreEntry = entry;
         gitignoreEntries.push(entry);
       }
+
+      const privateKeyEntry = target.encryption.privateKeyFile
+        ? gitignoreEntryFor(target.encryption.privateKeyFile, false, gitignorePath)
+        : undefined;
+      if (privateKeyEntry) {
+        gitignoreEntries.push(privateKeyEntry);
+      }
     }
   }
 
@@ -642,6 +865,204 @@ async function readBytes(filePath: string): Promise<Uint8Array> {
   }
 }
 
+export function extractKey(text: string): string {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+
+  if (lines.length !== 1) {
+    throw new AppSafeCliError("Key input must contain exactly one AppSafe key.");
+  }
+
+  return lines[0];
+}
+
+async function readKeyFile(filePath: string): Promise<string> {
+  const stats = await tryLstat(filePath);
+
+  if (!stats) {
+    throw new AppSafeCliError(`The key file does not exist: ${filePath}`);
+  }
+
+  if (!stats.isFile()) {
+    throw new AppSafeCliError(`The key file must be a regular file: ${filePath}`);
+  }
+
+  try {
+    return extractKey(await readFile(filePath, "utf8"));
+  } catch (error) {
+    throw isAppSafeCliError(error)
+      ? new AppSafeCliError(`${error.message.slice(0, -1)}: ${filePath}`)
+      : wrapFileError("Unable to read", filePath, error);
+  }
+}
+
+function isPrivateKey(key: string): boolean {
+  try {
+    getPublicKey(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function readPublicKeyFile(filePath: string): Promise<string> {
+  const key = await readKeyFile(filePath);
+
+  if (isPrivateKey(key)) {
+    throw new AppSafeCliError(
+      `The public key file contains a private key. Move it somewhere private and never commit it: ${filePath}`
+    );
+  }
+
+  try {
+    await getKeyFingerprint(key);
+  } catch {
+    throw new AppSafeCliError(`The file is not a valid AppSafe public key: ${filePath}`);
+  }
+
+  return key;
+}
+
+export async function readPrivateKeyFile(filePath: string): Promise<string> {
+  const key = await readKeyFile(filePath);
+
+  if (!isPrivateKey(key)) {
+    throw new AppSafeCliError(`The file is not a valid AppSafe private key: ${filePath}`);
+  }
+
+  return key;
+}
+
+function cachedKey(
+  cache: KeyCache,
+  filePath: string,
+  reader: (filePath: string) => Promise<string>
+): Promise<string> {
+  const key = pathKey(filePath);
+  let value = cache.get(key);
+
+  if (!value) {
+    value = reader(filePath);
+    cache.set(key, value);
+  }
+
+  return value;
+}
+
+function toCredentials(value: string | AppSafeCredentials | undefined): AppSafeCredentials {
+  return typeof value === "string" ? { password: value } : value ?? {};
+}
+
+async function publicKeysFor(
+  target: AppSafeResolvedTarget,
+  credentials: AppSafeCredentials,
+  cache: KeyCache
+): Promise<string[]> {
+  if (credentials.publicKeys?.length) {
+    return credentials.publicKeys.map(extractKey);
+  }
+
+  if (target.encryption.publicKeyFiles.length === 0) {
+    throw new AppSafeCliError(`No public key is configured for ${target.source}.`);
+  }
+
+  return Promise.all(
+    target.encryption.publicKeyFiles.map((file) => cachedKey(cache, file, readPublicKeyFile))
+  );
+}
+
+async function privateKeyFor(
+  target: AppSafeResolvedTarget,
+  credentials: AppSafeCredentials,
+  cache: KeyCache
+): Promise<string> {
+  if (credentials.privateKey !== undefined) {
+    return extractKey(credentials.privateKey);
+  }
+
+  if (!target.encryption.privateKeyFile) {
+    throw new AppSafeCliError(
+      `A private key is required to decrypt ${target.encrypted}. Configure privateKeyFile or supply a private key.`
+    );
+  }
+
+  return cachedKey(cache, target.encryption.privateKeyFile, readPrivateKeyFile);
+}
+
+function inspectPayload(encrypted: Uint8Array, filePath: string): AppSafePayloadInfo {
+  try {
+    return inspectAppSafePayload(encrypted);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new AppSafeCliError(`${message.slice(0, -1)}: ${filePath}`);
+  }
+}
+
+async function withTargetContext<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof AppSafeCryptoError) {
+      throw new AppSafeCliError(`${error.message.slice(0, -1)}: ${filePath}`);
+    }
+    throw error;
+  }
+}
+
+type PayloadDecryptor = () => Promise<Uint8Array>;
+
+async function prepareDecryption(
+  target: AppSafeResolvedTarget,
+  encrypted: Uint8Array,
+  credentials: AppSafeCredentials,
+  cache: KeyCache
+): Promise<{ info: AppSafePayloadInfo; decrypt: PayloadDecryptor }> {
+  const info = inspectPayload(encrypted, target.encrypted);
+
+  if (info.mode === "password") {
+    const password = credentials.password;
+    if (password === undefined) {
+      throw new AppSafeCliError(`A decryption password is required for ${target.encrypted}.`);
+    }
+    return {
+      info,
+      decrypt: () => withTargetContext(target.encrypted, () => decryptBytes(encrypted, password)),
+    };
+  }
+
+  const privateKey = await privateKeyFor(target, credentials, cache);
+  return {
+    info,
+    decrypt: () =>
+      withTargetContext(target.encrypted, () => decryptBytesWithPrivateKey(encrypted, privateKey)),
+  };
+}
+
+type PayloadEncryptor = (plaintext: Uint8Array) => Promise<Uint8Array>;
+
+async function prepareEncryption(
+  target: AppSafeResolvedTarget,
+  credentials: AppSafeCredentials,
+  cache: KeyCache,
+  password = credentials.password
+): Promise<PayloadEncryptor> {
+  if (target.encryption.mode === "password") {
+    if (password === undefined) {
+      throw new AppSafeCliError("An encryption password is required.");
+    }
+    const options = target.encryption.iterations === undefined
+      ? undefined
+      : { iterations: target.encryption.iterations };
+    return (plaintext) => encryptBytes(plaintext, password, options);
+  }
+
+  const publicKeys = await publicKeysFor(target, credentials, cache);
+  return (plaintext) =>
+    withTargetContext(target.source, () => encryptBytesForRecipients(plaintext, publicKeys));
+}
+
 async function collectDirectoryEntries(
   root: string
 ): Promise<Record<string, Uint8Array>> {
@@ -698,7 +1119,8 @@ async function createFolderArchive(source: string): Promise<Uint8Array> {
 async function writeFileAtomic(
   filePath: string,
   data: Uint8Array | string,
-  force: boolean
+  force: boolean,
+  mode?: number
 ): Promise<void> {
   const directory = dirname(filePath);
   const temporaryPath = join(
@@ -709,7 +1131,7 @@ async function writeFileAtomic(
 
   try {
     await mkdir(directory, { recursive: true });
-    await writeFile(temporaryPath, data, { flag: "wx" });
+    await writeFile(temporaryPath, data, { flag: "wx", mode });
 
     const existing = await tryLstat(filePath);
     if (existing) {
@@ -948,46 +1370,38 @@ export async function updateGitignore(
 export async function encryptConfiguredTargets(
   config: AppSafeConfig,
   configFile: string,
-  password: string | undefined,
+  credentials: string | AppSafeCredentials | undefined,
   options: AppSafeOperationOptions = {}
 ): Promise<AppSafeOperationResult[]> {
   const prepared = await prepareEncryptTargets(config, configFile, options);
+  const result = (target: PreparedEncryptTarget, bytes: number): AppSafeOperationResult => ({
+    source: target.source,
+    encrypted: target.encrypted,
+    restore: target.restore,
+    type: target.type,
+    mode: target.encryption.mode,
+    bytes,
+    gitignoreEntry: target.gitignoreEntry,
+  });
 
   if (options.dryRun) {
-    return prepared.targets.map((target) => ({
-      source: target.source,
-      encrypted: target.encrypted,
-      restore: target.restore,
-      type: target.type,
-      bytes: 0,
-      gitignoreEntry: target.gitignoreEntry,
-    }));
+    return prepared.targets.map((target) => result(target, 0));
   }
 
-  if (password === undefined) {
-    throw new AppSafeCliError("An encryption password is required.");
-  }
-
+  const resolvedCredentials = toCredentials(credentials);
+  const keyCache: KeyCache = new Map();
+  const encryptors = await Promise.all(
+    prepared.targets.map((target) => prepareEncryption(target, resolvedCredentials, keyCache))
+  );
   const results: AppSafeOperationResult[] = [];
-  const encryptionOptions = config.encryption?.iterations === undefined
-    ? undefined
-    : { iterations: config.encryption.iterations };
 
-  for (const target of prepared.targets) {
+  for (const [index, target] of prepared.targets.entries()) {
     const input = target.type === "directory"
       ? await createFolderArchive(target.source)
       : await readBytes(target.source);
-    const encrypted = await encryptBytes(input, password, encryptionOptions);
+    const encrypted = await encryptors[index](input);
     await writeFileAtomic(target.encrypted, encrypted, options.force === true);
-
-    results.push({
-      source: target.source,
-      encrypted: target.encrypted,
-      restore: target.restore,
-      type: target.type,
-      bytes: encrypted.byteLength,
-      gitignoreEntry: target.gitignoreEntry,
-    });
+    results.push(result(target, encrypted.byteLength));
   }
 
   if (prepared.gitignorePath && prepared.gitignoreEntries.length > 0) {
@@ -1000,7 +1414,7 @@ export async function encryptConfiguredTargets(
 export async function decryptConfiguredTargets(
   config: AppSafeConfig,
   configFile: string,
-  password: string | undefined,
+  credentials: string | AppSafeCredentials | undefined,
   options: AppSafeOperationOptions = {}
 ): Promise<AppSafeOperationResult[]> {
   const prepared = await prepareDecryptTargets(config, configFile, options);
@@ -1011,19 +1425,24 @@ export async function decryptConfiguredTargets(
       encrypted: target.encrypted,
       restore: target.restore,
       type: target.requestedType ?? "unknown",
+      mode: target.encryption.mode,
       bytes: 0,
     }));
   }
 
-  if (password === undefined) {
-    throw new AppSafeCliError("A decryption password is required.");
+  const resolvedCredentials = toCredentials(credentials);
+  const keyCache: KeyCache = new Map();
+  const decryptions = [];
+  for (const target of prepared) {
+    const encrypted = await readBytes(target.encrypted);
+    decryptions.push(await prepareDecryption(target, encrypted, resolvedCredentials, keyCache));
   }
 
   const results: AppSafeOperationResult[] = [];
 
-  for (const target of prepared) {
-    const encrypted = await readBytes(target.encrypted);
-    const decrypted = await decryptBytes(encrypted, password);
+  for (const [index, target] of prepared.entries()) {
+    const { info, decrypt } = decryptions[index];
+    const decrypted = await decrypt();
     const type = target.requestedType ?? (isZipPayload(decrypted) ? "directory" : "file");
 
     if (type === "directory") {
@@ -1042,11 +1461,124 @@ export async function decryptConfiguredTargets(
       encrypted: target.encrypted,
       restore: target.restore,
       type,
+      mode: info.mode,
       bytes: decrypted.byteLength,
     });
   }
 
   return results;
+}
+
+export async function rekeyConfiguredTargets(
+  config: AppSafeConfig,
+  configFile: string,
+  credentials: AppSafeCredentials,
+  options: Pick<AppSafeOperationOptions, "dryRun"> = {}
+): Promise<AppSafeRekeyResult[]> {
+  validateEncryptionSettings(config);
+  const targets = resolveConfiguredTargets(config, configFile);
+  const encryptedPaths = new Set<string>();
+  const payloads: Uint8Array[] = [];
+
+  for (const target of targets) {
+    const stats = await tryLstat(target.encrypted);
+    if (!stats || stats.isSymbolicLink() || !stats.isFile()) {
+      throw new AppSafeCliError(`The encrypted path must be an existing regular file: ${target.encrypted}`);
+    }
+
+    const key = pathKey(target.encrypted);
+    if (encryptedPaths.has(key)) {
+      throw new AppSafeCliError(`Multiple targets use the same encrypted file: ${target.encrypted}`);
+    }
+    encryptedPaths.add(key);
+    payloads.push(await readBytes(target.encrypted));
+  }
+
+  if (options.dryRun) {
+    return targets.map((target, index) => ({
+      encrypted: target.encrypted,
+      from: inspectPayload(payloads[index], target.encrypted).mode,
+      to: target.encryption.mode,
+      verified: false,
+    }));
+  }
+
+  const keyCache: KeyCache = new Map();
+  const ownFingerprint = credentials.privateKey === undefined
+    ? undefined
+    : await getKeyFingerprint(getPublicKey(extractKey(credentials.privateKey)));
+  const replacements: Array<{ result: AppSafeRekeyResult; payload: Uint8Array }> = [];
+
+  for (const [index, target] of targets.entries()) {
+    const current = await prepareDecryption(target, payloads[index], credentials, keyCache);
+    const newPassword = credentials.newPassword ?? credentials.password;
+    const encrypt = await prepareEncryption(target, credentials, keyCache, newPassword);
+    const plaintext = await current.decrypt();
+    const payload = await encrypt(plaintext);
+    const info = inspectAppSafePayload(payload);
+    let verified = false;
+
+    if (info.mode === "password" && newPassword !== undefined) {
+      verified = sameBytes(await decryptBytes(payload, newPassword), plaintext);
+    } else if (info.mode === "public-key" && ownFingerprint && info.recipients.includes(ownFingerprint)) {
+      const privateKey = extractKey(credentials.privateKey as string);
+      verified = sameBytes(await decryptBytesWithPrivateKey(payload, privateKey), plaintext);
+    }
+
+    if (info.mode === "password" && !verified) {
+      throw new AppSafeCliError(`Re-encrypted output failed verification: ${target.encrypted}`);
+    }
+
+    replacements.push({
+      result: { encrypted: target.encrypted, from: current.info.mode, to: info.mode, verified },
+      payload,
+    });
+  }
+
+  for (const { result, payload } of replacements) {
+    await writeFileAtomic(result.encrypted, payload, true);
+  }
+
+  return replacements.map(({ result }) => result);
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index]);
+}
+
+async function keyStatus(
+  filePath: string,
+  reader: (filePath: string) => Promise<string>
+): Promise<AppSafeKeyStatus> {
+  if (!(await tryLstat(filePath))) {
+    return { path: filePath, status: "missing" };
+  }
+
+  try {
+    const key = await reader(filePath);
+    return {
+      path: filePath,
+      status: "valid",
+      fingerprint: await getKeyFingerprint(isPrivateKey(key) ? getPublicKey(key) : key),
+    };
+  } catch {
+    return { path: filePath, status: "invalid" };
+  }
+}
+
+async function payloadStatus(
+  filePath: string,
+  stats: FileStats | undefined
+): Promise<AppSafeTargetStatus["payload"]> {
+  if (!stats?.isFile()) {
+    return undefined;
+  }
+
+  try {
+    return inspectAppSafePayload(await readBytes(filePath));
+  } catch {
+    return "invalid";
+  }
 }
 
 export async function inspectConfiguredTargets(
@@ -1068,7 +1600,91 @@ export async function inspectConfiguredTargets(
         sourceStatus: pathStatus(sourceStats),
         encryptedStatus: pathStatus(encryptedStats),
         restoreStatus: pathStatus(restoreStats),
+        publicKeys: await Promise.all(
+          target.encryption.publicKeyFiles.map((file) => keyStatus(file, readPublicKeyFile))
+        ),
+        privateKey: target.encryption.privateKeyFile
+          ? await keyStatus(target.encryption.privateKeyFile, readPrivateKeyFile)
+          : undefined,
+        payload: await payloadStatus(target.encrypted, encryptedStats),
       };
     })
   );
+}
+
+export async function generateKeyFiles(
+  publicKeyFile: string,
+  privateKeyFile: string,
+  options: AppSafeKeygenOptions = {}
+): Promise<AppSafeKeygenResult> {
+  const publicPath = resolve(publicKeyFile);
+  const privatePath = resolve(privateKeyFile);
+
+  if (samePath(publicPath, privatePath)) {
+    throw new AppSafeCliError("The public and private key paths must be different.");
+  }
+
+  const [publicStats, privateStats] = await Promise.all([
+    tryLstat(publicPath),
+    tryLstat(privatePath),
+  ]);
+
+  if (privateStats) {
+    throw new AppSafeCliError(
+      `A private key already exists: ${privatePath}. Keygen never overwrites private keys; move it aside manually after re-encrypting any artifacts that depend on it.`
+    );
+  }
+
+  if (publicStats && (!publicStats.isFile() || (!options.force && !options.dryRun))) {
+    throw new AppSafeCliError(
+      `The public key file already exists: ${publicPath}. Use --force to replace it.`
+    );
+  }
+
+  const gitignoreFile = options.gitignoreFile === false
+    ? undefined
+    : resolve(options.gitignoreFile ?? ".gitignore");
+  const gitignoreEntry = gitignoreFile
+    ? gitignoreEntryFor(privatePath, false, gitignoreFile)
+    : undefined;
+  const result: AppSafeKeygenResult = {
+    publicKeyFile: publicPath,
+    privateKeyFile: privatePath,
+    gitignoreFile: gitignoreEntry ? gitignoreFile : undefined,
+    gitignoreEntry,
+  };
+
+  if (options.dryRun) {
+    return result;
+  }
+
+  if (gitignoreFile && gitignoreEntry) {
+    await updateGitignore(gitignoreFile, [gitignoreEntry]);
+  }
+
+  const pair = await generateKeyPair();
+  await writeFileAtomic(
+    privatePath,
+    [
+      "# AppSafe private key. Keep it secret: never commit, log, or share it.",
+      `# Fingerprint: ${pair.fingerprint}`,
+      `# Public key: ${pair.publicKey}`,
+      pair.privateKey,
+      "",
+    ].join("\n"),
+    false,
+    PRIVATE_KEY_FILE_MODE
+  );
+  await writeFileAtomic(
+    publicPath,
+    [
+      "# AppSafe public key. Safe to commit and share with anyone who encrypts for you.",
+      `# Fingerprint: ${pair.fingerprint}`,
+      pair.publicKey,
+      "",
+    ].join("\n"),
+    options.force === true
+  );
+
+  return { ...result, fingerprint: pair.fingerprint };
 }
